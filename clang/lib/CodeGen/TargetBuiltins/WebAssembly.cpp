@@ -306,11 +306,21 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     // if.then block - call the function
     EmitBlock(IfThen);
     llvm::Type *RetType = ConvertType(E->getType());
-    Value *A = EmitScalarExpr(E->getArg(2));
-    Value *B = EmitScalarExpr(E->getArg(3));
-    Value *C = EmitScalarExpr(E->getArg(4));
-    llvm::FunctionType *CalleeType = llvm::FunctionType::get(RetType, {A->getType(), B->getType(), C->getType()}, false);
-    Value *Call = Builder.CreateCall(CalleeType, FuncRef, {A, B, C});
+    
+    // Generate arguments
+    std::vector<Value*> CallArgs;
+    std::vector<llvm::Type*> ParamTypes;
+    auto NumArgs = E->getNumArgs();
+    CallArgs.reserve(NumArgs - 2);
+    ParamTypes.reserve(NumArgs - 2);
+    for (unsigned i = 2; i < E->getNumArgs(); ++i) {
+      Value *Arg = EmitScalarExpr(E->getArg(i));
+      CallArgs.push_back(Arg);
+      ParamTypes.push_back(Arg->getType());
+    }
+    
+    llvm::FunctionType *CalleeType = llvm::FunctionType::get(RetType, ParamTypes, false);
+    Value *Call = Builder.CreateCall(CalleeType, FuncRef, CallArgs);
     Builder.CreateBr(Return);
     
     // if.end block - store 0 to okay and branch to return
