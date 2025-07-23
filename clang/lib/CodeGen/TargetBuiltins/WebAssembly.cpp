@@ -13,16 +13,18 @@
 #include "CGBuiltin.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IntrinsicsWebAssembly.h"
+#include "llvm/IR/Type.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace clang;
 using namespace CodeGen;
 using namespace llvm;
 
-CallInst* EmitRefTestIntrinsic(CodeGenFunction *CGF, llvm::FunctionType *LLVMFuncTy, Value *FuncRef, uint NParams) {
-    std::vector<Value *> Args;
+CallInst* EmitRefTestIntrinsic(CodeGenFunction *CGF, Value* FuncRef, llvm::Type *ReturnType, uint NParams, SmallVector<typename llvm::Type*, 3> Params) {
+    SmallVector<Value *, 5> Args;
     Args.reserve(NParams + 2);
     // The only real argument is the FuncRef
     Args.push_back(FuncRef);
@@ -39,15 +41,18 @@ CallInst* EmitRefTestIntrinsic(CodeGenFunction *CGF, llvm::FunctionType *LLVMFun
             CGF->getLLVMContext(), T->getPointerAddressSpace())));
       } else {
         // TODO: Handle reference types. For now, we reject them in Sema.
+        dbgs() << "Unhandled type: ";
+        T->print(dbgs());
+        dbgs() << "\n";
         llvm_unreachable("Unhandled type");
       }
     };
-    addType(LLVMFuncTy->getReturnType());
+    addType(ReturnType);
     // The token type indicates the boundary between return types and param
     // types.
     Args.push_back(PoisonValue::get(llvm::Type::getTokenTy(CGF->getLLVMContext())));
     for (uint i = 0; i < NParams; i++) {
-      addType(LLVMFuncTy->getParamType(i));
+      addType(Params[i]);
     }
     Function *RefTestCallee = CGF->CGM.getIntrinsic(Intrinsic::wasm_ref_test_func);
     return CGF->Builder.CreateCall(RefTestCallee, Args);
@@ -277,8 +282,14 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
 
     llvm::FunctionType *LLVMFuncTy =
         cast<llvm::FunctionType>(ConvertType(QualType(FuncTy, 0)));
-
-    return EmitRefTestIntrinsic(this,  LLVMFuncTy, FuncRef, LLVMFuncTy->getNumParams());
+    
+    auto NParams = LLVMFuncTy->getNumParams();
+    SmallVector<typename llvm::Type*, 3> Params;
+    Params.reserve(NParams);
+    for (uint I = 0; I < NParams; I++) {
+      Params.push_back(LLVMFuncTy->getParamType(I));
+    }
+    return EmitRefTestIntrinsic(this, FuncRef, LLVMFuncTy->getReturnType(), NParams, Params);
 
   }
   case WebAssembly::BI__builtin_wasm_nontrapping_call: {
@@ -293,46 +304,73 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
         cast<llvm::FunctionType>(ConvertType(QualType(FuncTy, 0)));
 
     
+    const auto NCallArgs =  LLVMFuncTy->getNumParams();
+    SmallVector<typename llvm::Type*, 3> ParamTypes;
+    ParamTypes.reserve(NCallArgs);
+    for (uint I = 0; I < NCallArgs; I++) {
+      ParamTypes.push_back(LLVMFuncTy->getParamType(I));
+    }
+
+    std::vector<BasicBlock*> TestBlocks;
+    TestBlocks.reserve(NCallArgs + 1);
+    for (uint CurNArgs = 0; CurNArgs <= NCallArgs; CurNArgs++) {
+      TestBlocks.push_back(createBasicBlock("test" + std::to_string(CurNArgs)));
+    }
+    Builder.CreateStore(Builder.getInt32(1), OkayAddr);
+    Builder.CreateBr(TestBlocks[NCallArgs]);
+
     // Create basic blocks
-    BasicBlock *IfThen = createBasicBlock("if.then");
-    BasicBlock *IfEnd = createBasicBlock("if.end");
     BasicBlock *Return = createBasicBlock("return");
-    
-    CallInst* TestResult = EmitRefTestIntrinsic(this,  LLVMFuncTy, FuncRef, LLVMFuncTy->getNumParams());
-    // Compare test result with 0 and branch
-    Value *ToBoolNot = Builder.CreateICmpEQ(TestResult, Builder.getInt32(0));
-    Builder.CreateCondBr(ToBoolNot, IfEnd, IfThen);
-    
-    // if.then block - call the function
-    EmitBlock(IfThen);
+    BasicBlock *Fail = createBasicBlock("fail");
+    std::vector<BasicBlock*> CallBlocks;
+    std::vector<Value*> CallNodes;
+    CallBlocks.reserve(NCallArgs + 1);
+    CallNodes.reserve(NCallArgs + 1);
+
     llvm::Type *RetType = ConvertType(E->getType());
-    
-    // Generate arguments
-    std::vector<Value*> CallArgs;
-    std::vector<llvm::Type*> ParamTypes;
-    auto NumArgs = E->getNumArgs();
-    CallArgs.reserve(NumArgs - 2);
-    ParamTypes.reserve(NumArgs - 2);
-    for (unsigned i = 2; i < E->getNumArgs(); ++i) {
-      Value *Arg = EmitScalarExpr(E->getArg(i));
-      CallArgs.push_back(Arg);
-      ParamTypes.push_back(Arg->getType());
+    for (uint CurNArgs = 0; CurNArgs <= NCallArgs; CurNArgs++) {
+      // Make blocks that call the function with the approriate number of arguments
+      BasicBlock *CallBlock = createBasicBlock("call" + std::to_string(CurNArgs));
+      CallBlocks.push_back(CallBlock);
+      EmitBlock(CallBlock);
+      
+      // Generate arguments
+      std::vector<Value*> CallArgs;
+      std::vector<llvm::Type*> ParamTypes;
+      CallArgs.reserve(CurNArgs);
+      ParamTypes.reserve(CurNArgs);
+      for (unsigned I = 0; I < CurNArgs; ++I) {
+        Value *Arg = EmitScalarExpr(E->getArg(I + 2));
+        CallArgs.push_back(Arg);
+        ParamTypes.push_back(Arg->getType());
+      }
+      
+      llvm::FunctionType *CalleeType = llvm::FunctionType::get(RetType, ParamTypes, false);
+      Value *Call = Builder.CreateCall(CalleeType, FuncRef, CallArgs);
+      CallNodes.push_back(Call);
+      Builder.CreateBr(Return);
+    }
+
+    for (int CurNArgs = (int)NCallArgs; CurNArgs >= 0; CurNArgs--) {
+      EmitBlock(TestBlocks[CurNArgs]);
+      CallInst* TestResult = EmitRefTestIntrinsic(this, FuncRef, LLVMFuncTy->getReturnType(), CurNArgs, ParamTypes);
+      Value *IsNonZero = Builder.CreateICmpNE(TestResult, Builder.getInt32(0));
+      BasicBlock *Next = CurNArgs > 0 ? TestBlocks[CurNArgs - 1] : Fail;
+      Builder.CreateCondBr(IsNonZero, CallBlocks[CurNArgs], Next);
     }
     
-    llvm::FunctionType *CalleeType = llvm::FunctionType::get(RetType, ParamTypes, false);
-    Value *Call = Builder.CreateCall(CalleeType, FuncRef, CallArgs);
-    Builder.CreateBr(Return);
-    
-    // if.end block - store 0 to okay and branch to return
-    EmitBlock(IfEnd);
+    // Fail block - store 0 to okay and branch to return
+    EmitBlock(Fail);
     Builder.CreateStore(Builder.getInt32(0), OkayAddr);
     Builder.CreateBr(Return);
     
     // return block - phi node to select return value
     EmitBlock(Return);
-    PHINode *RetVal = Builder.CreatePHI(RetType, 2);
-    RetVal->addIncoming(Call, IfThen);
-    RetVal->addIncoming(Constant::getNullValue(RetType), IfEnd);
+    PHINode *RetVal = Builder.CreatePHI(RetType, NCallArgs + 2);
+    for (uint N = 0; N <= NCallArgs; N++ ) {
+      RetVal->addIncoming(CallNodes[N], CallBlocks[N]);
+    }
+    RetVal->addIncoming(Constant::getNullValue(RetType), Fail);
     return RetVal;
   }
   case WebAssembly::BI__builtin_wasm_swizzle_i8x16: {
