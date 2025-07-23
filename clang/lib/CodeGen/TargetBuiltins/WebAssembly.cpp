@@ -21,6 +21,38 @@ using namespace clang;
 using namespace CodeGen;
 using namespace llvm;
 
+CallInst* EmitRefTestIntrinsic(CodeGenFunction *CGF, llvm::FunctionType *LLVMFuncTy, Value *FuncRef, uint NParams) {
+    std::vector<Value *> Args;
+    Args.reserve(NParams + 2);
+    // The only real argument is the FuncRef
+    Args.push_back(FuncRef);
+    // Add the type information
+    auto addType = [&CGF, &Args](llvm::Type *T) {
+      if (T->isVoidTy()) {
+        // Do nothing
+      } else if (T->isFloatingPointTy()) {
+        Args.push_back(ConstantFP::get(T, 0));
+      } else if (T->isIntegerTy()) {
+        Args.push_back(ConstantInt::get(T, 0));
+      } else if (T->isPointerTy()) {
+        Args.push_back(ConstantPointerNull::get(llvm::PointerType::get(
+            CGF->getLLVMContext(), T->getPointerAddressSpace())));
+      } else {
+        // TODO: Handle reference types. For now, we reject them in Sema.
+        llvm_unreachable("Unhandled type");
+      }
+    };
+    addType(LLVMFuncTy->getReturnType());
+    // The token type indicates the boundary between return types and param
+    // types.
+    Args.push_back(PoisonValue::get(llvm::Type::getTokenTy(CGF->getLLVMContext())));
+    for (uint i = 0; i < NParams; i++) {
+      addType(LLVMFuncTy->getParamType(i));
+    }
+    Function *RefTestCallee = CGF->CGM.getIntrinsic(Intrinsic::wasm_ref_test_func);
+    return CGF->Builder.CreateCall(RefTestCallee, Args);
+}
+
 Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
                                                    const CallExpr *E) {
   switch (BuiltinID) {
@@ -246,38 +278,52 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     llvm::FunctionType *LLVMFuncTy =
         cast<llvm::FunctionType>(ConvertType(QualType(FuncTy, 0)));
 
-    uint NParams = LLVMFuncTy->getNumParams();
-    std::vector<Value *> Args;
-    Args.reserve(NParams + 2);
-    // The only real argument is the FuncRef
-    Args.push_back(FuncRef);
+    return EmitRefTestIntrinsic(this,  LLVMFuncTy, FuncRef, LLVMFuncTy->getNumParams());
 
-    // Add the type information
-    auto addType = [this, &Args](llvm::Type *T) {
-      if (T->isVoidTy()) {
-        // Do nothing
-      } else if (T->isFloatingPointTy()) {
-        Args.push_back(ConstantFP::get(T, 0));
-      } else if (T->isIntegerTy()) {
-        Args.push_back(ConstantInt::get(T, 0));
-      } else if (T->isPointerTy()) {
-        Args.push_back(ConstantPointerNull::get(llvm::PointerType::get(
-            getLLVMContext(), T->getPointerAddressSpace())));
-      } else {
-        // TODO: Handle reference types. For now, we reject them in Sema.
-        llvm_unreachable("Unhandled type");
-      }
-    };
+  }
+  case WebAssembly::BI__builtin_wasm_nontrapping_call: {
+    Address OkayAddr = EmitPointerWithAlignment(E->getArg(0));
+    Value *FuncRef = EmitScalarExpr(E->getArg(1));
+    const PointerType *PtrTy = E->getArg(1)->getType()->getAs<PointerType>();
+    assert(PtrTy && "Sema should have ensured this is a function pointer");
 
-    addType(LLVMFuncTy->getReturnType());
-    // The token type indicates the boundary between return types and param
-    // types.
-    Args.push_back(PoisonValue::get(llvm::Type::getTokenTy(getLLVMContext())));
-    for (uint i = 0; i < NParams; i++) {
-      addType(LLVMFuncTy->getParamType(i));
-    }
-    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_ref_test_func);
-    return Builder.CreateCall(Callee, Args);
+    const FunctionType *FuncTy = PtrTy->getPointeeType()->getAs<FunctionType>();
+    assert(FuncTy && "Sema should have ensured this is a function pointer");
+    llvm::FunctionType *LLVMFuncTy =
+        cast<llvm::FunctionType>(ConvertType(QualType(FuncTy, 0)));
+
+    
+    // Create basic blocks
+    BasicBlock *IfThen = createBasicBlock("if.then");
+    BasicBlock *IfEnd = createBasicBlock("if.end");
+    BasicBlock *Return = createBasicBlock("return");
+    
+    CallInst* TestResult = EmitRefTestIntrinsic(this,  LLVMFuncTy, FuncRef, LLVMFuncTy->getNumParams());
+    // Compare test result with 0 and branch
+    Value *ToBoolNot = Builder.CreateICmpEQ(TestResult, Builder.getInt32(0));
+    Builder.CreateCondBr(ToBoolNot, IfEnd, IfThen);
+    
+    // if.then block - call the function
+    EmitBlock(IfThen);
+    llvm::Type *RetType = ConvertType(E->getType());
+    Value *A = EmitScalarExpr(E->getArg(2));
+    Value *B = EmitScalarExpr(E->getArg(3));
+    Value *C = EmitScalarExpr(E->getArg(4));
+    llvm::FunctionType *CalleeType = llvm::FunctionType::get(RetType, {A->getType(), B->getType(), C->getType()}, false);
+    Value *Call = Builder.CreateCall(CalleeType, FuncRef, {A, B, C});
+    Builder.CreateBr(Return);
+    
+    // if.end block - store 0 to okay and branch to return
+    EmitBlock(IfEnd);
+    Builder.CreateStore(Builder.getInt32(0), OkayAddr);
+    Builder.CreateBr(Return);
+    
+    // return block - phi node to select return value
+    EmitBlock(Return);
+    PHINode *RetVal = Builder.CreatePHI(RetType, 2);
+    RetVal->addIncoming(Call, IfThen);
+    RetVal->addIncoming(Constant::getNullValue(RetType), IfEnd);
+    return RetVal;
   }
   case WebAssembly::BI__builtin_wasm_swizzle_i8x16: {
     Value *Src = EmitScalarExpr(E->getArg(0));

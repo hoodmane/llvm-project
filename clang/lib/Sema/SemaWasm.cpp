@@ -274,6 +274,33 @@ bool SemaWasm::BuiltinWasmTestFunctionPointerSignature(CallExpr *TheCall) {
   return false;
 }
 
+bool SemaWasm::BuiltinWasmNonTrappingCall(CallExpr *TheCall) {
+
+  Expr *FuncPtrArg = TheCall->getArg(1);
+  QualType ArgType = FuncPtrArg->getType();
+
+  // Check that the argument is a function pointer
+  const PointerType *PtrTy = ArgType->getAs<PointerType>();
+  if (!PtrTy) {
+    return Diag(FuncPtrArg->getBeginLoc(),
+                diag::err_typecheck_expect_function_pointer)
+           << ArgType << FuncPtrArg->getSourceRange();
+  }
+
+  const FunctionProtoType *FuncTy =
+      PtrTy->getPointeeType()->getAs<FunctionProtoType>();
+  if (!FuncTy) {
+    return Diag(FuncPtrArg->getBeginLoc(),
+                diag::err_typecheck_expect_function_pointer)
+           << ArgType << FuncPtrArg->getSourceRange();
+  }
+
+  // Set return type to int (the result of the test)
+  TheCall->setType(FuncTy->getReturnType());
+
+  return false;
+}
+
 bool SemaWasm::CheckWebAssemblyBuiltinFunctionCall(const TargetInfo &TI,
                                                    unsigned BuiltinID,
                                                    CallExpr *TheCall) {
@@ -298,6 +325,8 @@ bool SemaWasm::CheckWebAssemblyBuiltinFunctionCall(const TargetInfo &TI,
     return BuiltinWasmTableCopy(TheCall);
   case WebAssembly::BI__builtin_wasm_test_function_pointer_signature:
     return BuiltinWasmTestFunctionPointerSignature(TheCall);
+  case WebAssembly::BI__builtin_wasm_nontrapping_call:
+    return BuiltinWasmNonTrappingCall(TheCall);
   }
 
   return false;
