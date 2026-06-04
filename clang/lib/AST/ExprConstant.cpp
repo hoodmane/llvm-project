@@ -15867,6 +15867,7 @@ GCCTypeClass EvaluateBuiltinClassifyType(QualType T,
   case Type::ObjCInterface:
   case Type::ObjCObjectPointer:
   case Type::Pipe:
+  case Type::WebAssemblyTable:
   case Type::HLSLAttributedResource:
   case Type::HLSLInlineSpirv:
   case Type::OverflowBehavior:

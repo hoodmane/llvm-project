@@ -240,6 +240,7 @@ bool TypePrinter::canPrefixQualifiers(const Type *T,
     case Type::ObjCInterface:
     case Type::Atomic:
     case Type::Pipe:
+    case Type::WebAssemblyTable:
     case Type::BitInt:
     case Type::DependentBitInt:
     case Type::BTFTagAttributed:
@@ -1494,6 +1495,18 @@ void TypePrinter::printPipeBefore(const PipeType *T, raw_ostream &OS) {
 }
 
 void TypePrinter::printPipeAfter(const PipeType *T, raw_ostream &OS) {}
+
+void TypePrinter::printWebAssemblyTableBefore(const WebAssemblyTableType *T,
+                                              raw_ostream &OS) {
+  IncludeStrongLifetimeRAII Strong(Policy);
+  print(T->getElementType(), OS, StringRef());
+  spaceBeforePlaceHolder(OS);
+}
+
+void TypePrinter::printWebAssemblyTableAfter(const WebAssemblyTableType *T,
+                                             raw_ostream &OS) {
+  OS << " __attribute__((wasmtable))";
+}
 
 void TypePrinter::printBitIntBefore(const BitIntType *T, raw_ostream &OS) {
   if (T->isUnsigned())
