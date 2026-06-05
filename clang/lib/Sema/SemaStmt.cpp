@@ -4032,7 +4032,8 @@ StmtResult Sema::BuildReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
 
   if (RetValExp) {
     const auto *ATy = dyn_cast<ArrayType>(RetValExp->getType());
-    if (ATy && ATy->getElementType().isWebAssemblyReferenceType()) {
+    if ((ATy && ATy->getElementType().isWebAssemblyReferenceType()) ||
+        RetValExp->getType()->isWebAssemblyTableType()) {
       Diag(ReturnLoc, diag::err_wasm_table_art) << 1;
       return StmtError();
     }

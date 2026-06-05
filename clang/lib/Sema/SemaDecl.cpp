@@ -8226,16 +8226,15 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     }
   }
 
-  // WebAssembly tables are always in address space 1 (wasm_var). Don't apply
-  // address space if the table has local storage (semantic checks elsewhere
-  // will produce an error anyway).
-  if (const auto *ATy = dyn_cast<ArrayType>(NewVD->getType())) {
-    if (ATy && ATy->getElementType().isWebAssemblyReferenceType() &&
-        !NewVD->hasLocalStorage()) {
-      QualType Type = Context.getAddrSpaceQualType(
-          NewVD->getType(), Context.getLangASForBuiltinAddressSpace(1));
-      NewVD->setType(Type);
-    }
+  // A WebAssemblyTableType is always in address space 1 (wasm_var). Don't apply
+  // the address space if the declaration has local storage (semantic checks
+  // elsewhere will produce an error anyway).
+  QualType VarTy = NewVD->getType();
+  bool IsWasmTable = VarTy->isWebAssemblyTableType();
+  if (IsWasmTable && !NewVD->hasLocalStorage()) {
+    QualType Type = Context.getAddrSpaceQualType(
+        VarTy, Context.getLangASForBuiltinAddressSpace(1));
+    NewVD->setType(Type);
   }
 
   LoadExternalExtnameUndeclaredIdentifiers();
@@ -8376,7 +8375,12 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     // error like WebAssembly tables being declared as arrays with a non-zero
     // size, but then parsing continues and emits further errors on that line.
     // To avoid that we check here if it happened and return nullptr.
-    if (NewVD->getType()->isWebAssemblyTableType() && NewVD->isInvalidDecl())
+    QualType NewVDTy = NewVD->getType();
+    bool IsWasmTableOrRefArray = NewVDTy->isWebAssemblyTableType();
+    if (const auto *ATy = Context.getAsArrayType(NewVDTy))
+      IsWasmTableOrRefArray |=
+          ATy->getElementType().isWebAssemblyReferenceType();
+    if (IsWasmTableOrRefArray && NewVD->isInvalidDecl())
       return nullptr;
 
     if (NewTemplate) {
@@ -9060,8 +9064,15 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
   }
 
   // WebAssembly tables must be static with a zero length and can't be
-  // declared within functions.
-  if (T->isWebAssemblyTableType()) {
+  // declared within functions. A valid table is represented by a
+  // WebAssemblyTableType; an array of a WebAssembly reference type that is not
+  // a valid table (e.g. has a non-zero or unspecified length) is detected here
+  // so that it can be diagnosed.
+  bool IsWasmTable = T->isWebAssemblyTableType();
+  bool IsWasmRefArray = false;
+  if (const auto *ATy = Context.getAsArrayType(T))
+    IsWasmRefArray = ATy->getElementType().isWebAssemblyReferenceType();
+  if (IsWasmTable || IsWasmRefArray) {
     if (getCurScope()->getParent()) { // Parent is null at top-level
       Diag(NewVD->getLocation(), diag::err_wasm_table_in_function);
       NewVD->setInvalidDecl();
@@ -9072,8 +9083,7 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
       NewVD->setInvalidDecl();
       return;
     }
-    const auto *ATy = dyn_cast<ConstantArrayType>(T.getTypePtr());
-    if (!ATy || ATy->getZExtSize() != 0) {
+    if (!IsWasmTable) {
       Diag(NewVD->getLocation(),
            diag::err_typecheck_wasm_table_must_have_zero_length);
       NewVD->setInvalidDecl();
@@ -11230,9 +11240,15 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         }
       }
     }
-    // WebAssembly tables can't be used as function parameters.
+    // WebAssembly tables can't be used as function parameters. A parameter
+    // declared as an array of a reference type decays to a pointer, so check
+    // the pre-decay type as well.
     if (Context.getTargetInfo().getTriple().isWasm()) {
-      if (PT->getUnqualifiedDesugaredType()->isWebAssemblyTableType()) {
+      bool IsWasmTableParam =
+          PT->getUnqualifiedDesugaredType()->isWebAssemblyTableType();
+      if (const auto *ATy = Context.getAsArrayType(Param->getOriginalType()))
+        IsWasmTableParam |= ATy->getElementType().isWebAssemblyReferenceType();
+      if (IsWasmTableParam) {
         Diag(Param->getTypeSpecStartLoc(),
              diag::err_wasm_table_as_function_parameter);
         D.setInvalidType();
@@ -19401,6 +19417,10 @@ FieldDecl *Sema::CheckFieldDecl(DeclarationName Name, QualType T,
   }
 
   QualType EltTy = Context.getBaseElementType(T);
+  // A WebAssembly table cannot be a struct or union member. Diagnose it via its
+  // (sizeless) reference element type.
+  if (const auto *WTT = EltTy->getAs<WebAssemblyTableType>())
+    EltTy = WTT->getElementType();
   if (!EltTy->isDependentType() && !EltTy->containsErrors()) {
     bool isIncomplete =
         LangOpts.HLSL // HLSL allows sizeless builtin types

@@ -1499,13 +1499,14 @@ void TypePrinter::printPipeAfter(const PipeType *T, raw_ostream &OS) {}
 void TypePrinter::printWebAssemblyTableBefore(const WebAssemblyTableType *T,
                                               raw_ostream &OS) {
   IncludeStrongLifetimeRAII Strong(Policy);
-  print(T->getElementType(), OS, StringRef());
-  spaceBeforePlaceHolder(OS);
+  printBefore(T->getElementType(), OS);
 }
 
 void TypePrinter::printWebAssemblyTableAfter(const WebAssemblyTableType *T,
                                              raw_ostream &OS) {
-  OS << " __attribute__((wasmtable))";
+  // Print like the zero-length array a table is declared as.
+  OS << "[0]";
+  printAfter(T->getElementType(), OS);
 }
 
 void TypePrinter::printBitIntBefore(const BitIntType *T, raw_ostream &OS) {
