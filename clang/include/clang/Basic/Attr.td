@@ -5363,6 +5363,11 @@ def WebAssemblyFuncref : TypeAttr, TargetSpecificAttr<TargetWebAssembly> {
   let Subjects = SubjectList<[FunctionPointer], ErrorDiag>;
 }
 
+def WebAssemblyTable : TypeAttr, TargetSpecificAttr<TargetWebAssembly> {
+  let Spellings = [GNU<"wasmtable">];
+  let Documentation = [WebAssemblyTableDocs];
+}
+
 def ReadOnlyPlacement : InheritableAttr {
   let Spellings = [Clang<"enforce_read_only_placement">];
   let Subjects = SubjectList<[Record]>;

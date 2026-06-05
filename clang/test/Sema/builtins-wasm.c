@@ -3,7 +3,7 @@
 
 #define EXPR_HAS_TYPE(expr, type) _Generic((expr), type : 1, default : 0)
 
-static __externref_t table[0];
+static __externref_t table[0] __attribute__((wasmtable));
 
 typedef void (*__funcref funcref_t)();
 void test_ref_null() {

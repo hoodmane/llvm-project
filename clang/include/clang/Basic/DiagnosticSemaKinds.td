@@ -13837,8 +13837,11 @@ def err_wasm_funcref_not_wasm : Error<
   "invalid use of '__funcref' keyword outside the WebAssembly triple">;
 def err_wasm_table_pr : Error<
   "cannot form a %select{pointer|reference}0 to a WebAssembly table">;
-def err_typecheck_wasm_table_must_have_zero_length : Error<
-  "only zero-length WebAssembly tables are currently supported">;
+def err_wasm_table_attr_invalid_type : Error<
+  "'wasmtable' attribute only applies to a zero-length array of WebAssembly "
+  "reference types">;
+def err_wasm_reftype_array : Error<
+  "arrays of WebAssembly reference types are not yet supported">;
 def err_wasm_table_in_function : Error<
   "WebAssembly table cannot be declared within a function">;
 def err_wasm_table_as_function_parameter : Error<

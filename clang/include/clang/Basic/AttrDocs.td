@@ -7183,6 +7183,26 @@ request a specific string name be used instead.
   }];
 }
 
+def WebAssemblyTableDocs : Documentation {
+  let Category = DocCatType;
+  let Content = [{
+Clang supports the ``__attribute__((wasmtable))`` attribute for the WebAssembly
+target. This attribute must be applied to a file-scope, ``static``, zero-length
+array whose element type is a WebAssembly reference type (``__externref_t`` or a
+``__funcref`` function pointer) in order to declare a WebAssembly table:
+
+.. code-block:: c
+
+  static __externref_t my_table[0] __attribute__((wasmtable));
+
+The resulting declaration has a distinct WebAssembly table type. A WebAssembly
+table may only be used with the WebAssembly table builtins (e.g.
+``__builtin_wasm_table_get``). An array of a WebAssembly reference type declared
+without this attribute is an ordinary array of a sizeless type and cannot be
+used.
+  }];
+}
+
 def WebAssemblyImportModuleDocs : Documentation {
   let Category = DocCatFunction;
   let Content = [{

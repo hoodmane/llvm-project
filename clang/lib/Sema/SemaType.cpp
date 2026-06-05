@@ -2135,20 +2135,13 @@ QualType Sema::BuildArrayType(QualType T, ArraySizeModifier ASM,
       return QualType();
   }
 
-  // Multi-dimensional arrays of WebAssembly references are not allowed. The
-  // element type is either an array whose element is a reference type, or a
-  // WebAssembly table (a zero-length reference array already lowered to a
-  // WebAssemblyTableType).
-  if (Context.getTargetInfo().getTriple().isWasm()) {
-    if (T->isWebAssemblyTableType()) {
+  // Multi-dimensional arrays of WebAssembly references are not allowed.
+  if (Context.getTargetInfo().getTriple().isWasm() && T->isArrayType()) {
+    const auto *ATy = dyn_cast<ArrayType>(T);
+    if (ATy && ATy->getElementType().isWebAssemblyReferenceType()) {
       Diag(Loc, diag::err_wasm_reftype_multidimensional_array);
       return QualType();
     }
-    if (const auto *ATy = dyn_cast<ArrayType>(T))
-      if (ATy->getElementType().isWebAssemblyReferenceType()) {
-        Diag(Loc, diag::err_wasm_reftype_multidimensional_array);
-        return QualType();
-      }
   }
 
   if (T->isSizelessType() && !T.isWebAssemblyReferenceType()) {
@@ -2369,18 +2362,6 @@ QualType Sema::BuildArrayType(QualType T, ArraySizeModifier ASM,
       return QualType();
     }
   }
-
-  // On WebAssembly, a zero-length array of a reference type is a table. Give it
-  // a dedicated WebAssemblyTableType so that it is distinguished from an
-  // ordinary array. WebAssembly tables are not first-class: a table object may
-  // only be created by a global declaration and used as an argument to the
-  // table builtins. Other uses (locals, parameters, return values, struct or
-  // union members, taking a pointer, sizeof, ...) are rejected by the
-  // WebAssemblyTableType checks elsewhere.
-  if (const auto *CAT = dyn_cast<ConstantArrayType>(T))
-    if (CAT->getZExtSize() == 0 &&
-        CAT->getElementType().isWebAssemblyReferenceType())
-      T = Context.getWebAssemblyTableType(CAT->getElementType());
 
   return T;
 }
@@ -4352,6 +4333,32 @@ static bool shouldHaveNullability(QualType T) {
              T->getCanonicalTypeInternal());
 }
 
+/// Returns true if \p QT is, or structurally contains (through pointers,
+/// arrays, or function types), an array whose element is a WebAssembly
+/// reference type. Such arrays are only valid as WebAssembly tables (spelled
+/// with the 'wasmtable' attribute and represented by WebAssemblyTableType);
+/// any other occurrence is not yet supported.
+static bool containsWebAssemblyReferenceArray(ASTContext &Ctx, QualType QT) {
+  if (const auto *ATy = Ctx.getAsArrayType(QT)) {
+    if (ATy->getElementType().isWebAssemblyReferenceType())
+      return true;
+    return containsWebAssemblyReferenceArray(Ctx, ATy->getElementType());
+  }
+  if (const auto *PTy = QT->getAs<PointerType>())
+    return containsWebAssemblyReferenceArray(Ctx, PTy->getPointeeType());
+  if (const auto *BPTy = QT->getAs<BlockPointerType>())
+    return containsWebAssemblyReferenceArray(Ctx, BPTy->getPointeeType());
+  if (const auto *FTy = QT->getAs<FunctionType>()) {
+    if (containsWebAssemblyReferenceArray(Ctx, FTy->getReturnType()))
+      return true;
+    if (const auto *FPTy = dyn_cast<FunctionProtoType>(FTy))
+      for (QualType ParamTy : FPTy->getParamTypes())
+        if (containsWebAssemblyReferenceArray(Ctx, ParamTy))
+          return true;
+  }
+  return false;
+}
+
 static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
                                                 QualType declSpecType,
                                                 TypeSourceInfo *TInfo) {
@@ -5680,6 +5687,31 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
   }
   processTypeAttrs(state, T, TAL_DeclName, NonSlidingAttrs);
   processTypeAttrs(state, T, TAL_DeclName, D.getAttributes());
+
+  // An array of a WebAssembly reference type is only valid as a WebAssembly
+  // table, which is spelled with the 'wasmtable' attribute and is represented
+  // by a WebAssemblyTableType (produced above by processTypeAttrs). Any
+  // remaining array of a reference type (possibly nested behind pointers or
+  // function types) is not yet supported. Multi-dimensional reference arrays
+  // are diagnosed in BuildArrayType. If a 'wasmtable' attribute is present but
+  // the array didn't become a table, HandleWebAssemblyTableAttr already
+  // diagnosed it, so don't emit a second error here. The attribute may appear
+  // on the declarator, in the declaration-specifiers, or as a leading
+  // declaration attribute; check all three so the redundant error is suppressed
+  // regardless of placement.
+  bool HasWasmTableAttr =
+      D.getAttributes().hasAttribute(ParsedAttr::AT_WebAssemblyTable) ||
+      D.getDeclarationAttributes().hasAttribute(
+          ParsedAttr::AT_WebAssemblyTable) ||
+      D.getDeclSpec().getAttributes().hasAttribute(
+          ParsedAttr::AT_WebAssemblyTable);
+  if (S.Context.getTargetInfo().getTriple().isWasm() && !HasWasmTableAttr &&
+      containsWebAssemblyReferenceArray(S.Context, T)) {
+    S.Diag(D.getBeginLoc(), diag::err_wasm_reftype_array);
+    T = S.Context.IntTy;
+    D.setInvalidType(true);
+    AreDeclaratorChunksValid = false;
+  }
 
   // Diagnose any ignored type attributes.
   state.diagnoseIgnoredTypeAttrs(T);
@@ -7382,6 +7414,26 @@ static bool HandleWebAssemblyFuncrefAttr(TypeProcessingState &State,
   Pointee = S.Context.getAddrSpaceQualType(
       S.Context.removeAddrSpaceQualType(Pointee), ASIdx);
   QT = State.getAttributedType(A, QT, S.Context.getPointerType(Pointee));
+  return false;
+}
+
+static bool HandleWebAssemblyTableAttr(TypeProcessingState &State,
+                                       QualType &QT, ParsedAttr &PAttr) {
+  assert(PAttr.getKind() == ParsedAttr::AT_WebAssemblyTable);
+
+  Sema &S = State.getSema();
+
+  // The 'wasmtable' attribute turns a zero-length array of a WebAssembly
+  // reference type into a dedicated WebAssemblyTableType.
+  const auto *CAT = S.Context.getAsConstantArrayType(QT);
+  if (!CAT || !CAT->getElementType().isWebAssemblyReferenceType() ||
+      CAT->getZExtSize() != 0) {
+    S.Diag(PAttr.getLoc(), diag::err_wasm_table_attr_invalid_type);
+    PAttr.setInvalid();
+    return true;
+  }
+
+  QT = S.Context.getWebAssemblyTableType(CAT->getElementType());
   return false;
 }
 
@@ -9242,6 +9294,12 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
 
     case ParsedAttr::AT_WebAssemblyFuncref: {
       if (!HandleWebAssemblyFuncrefAttr(state, type, attr))
+        attr.setUsedAsTypeAttr();
+      break;
+    }
+
+    case ParsedAttr::AT_WebAssemblyTable: {
+      if (!HandleWebAssemblyTableAttr(state, type, attr))
         attr.setUsedAsTypeAttr();
       break;
     }
