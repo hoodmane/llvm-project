@@ -201,6 +201,9 @@ def export_all: FF<"export-all">,
 def export_table: FF<"export-table">,
   HelpText<"Export function table to the environment">;
 
+def export_externref_table: FF<"export-externref-table">,
+  HelpText<"Export the default externref table to the environment">;
+
 def growable_table: FF<"growable-table">,
   HelpText<"Remove maximum size from function table, allowing table to grow">;
 
@@ -228,6 +231,9 @@ defm soname: Eq<"soname", "Set the module name in the generated name section">;
 
 def import_table: FF<"import-table">,
   HelpText<"Import function table from the environment">;
+
+def import_externref_table: FF<"import-externref-table">,
+  HelpText<"Import the default externref table from the environment">;
 
 def initial_heap: JJ<"initial-heap=">,
   HelpText<"Initial size of the heap">;

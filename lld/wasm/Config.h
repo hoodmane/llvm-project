@@ -61,6 +61,7 @@ struct Config {
   bool exportAll;
   bool exportDynamic;
   bool exportTable;
+  bool exportExternrefTable;
   bool extendedConst;
   bool growableTable;
   bool gcSections;
@@ -70,6 +71,7 @@ struct Config {
   std::optional<llvm::StringRef> memoryExport;
   bool sharedMemory;
   bool importTable;
+  bool importExternrefTable;
   bool importUndefined;
   std::optional<bool> is64;
   bool mergeDataSegments;
@@ -254,6 +256,11 @@ struct Ctx {
     // Used as an address space for function pointers, with each function that
     // is used as a function pointer being allocated a slot.
     TableSymbol *indirectFunctionTable;
+
+    // __externref_table
+    // Default externref table, synthesized by the linker, used as a place to
+    // store externref values (which cannot live in linear memory).
+    TableSymbol *externrefTable;
 
     // __wasm_set_tls_base
     // Function used to set TLS base in libcall thread context modules.

@@ -538,6 +538,7 @@ static void readConfigs(opt::InputArgList &args) {
   ctx.arg.entry = getEntry(args);
   ctx.arg.exportAll = args.hasArg(OPT_export_all);
   ctx.arg.exportTable = args.hasArg(OPT_export_table);
+  ctx.arg.exportExternrefTable = args.hasArg(OPT_export_externref_table);
   ctx.arg.growableTable = args.hasArg(OPT_growable_table);
   ctx.arg.noinhibitExec = args.hasArg(OPT_noinhibit_exec);
 
@@ -560,6 +561,7 @@ static void readConfigs(opt::InputArgList &args) {
   ctx.arg.sharedMemory = args.hasArg(OPT_shared_memory);
   ctx.arg.soName = args.getLastArgValue(OPT_soname);
   ctx.arg.importTable = args.hasArg(OPT_import_table);
+  ctx.arg.importExternrefTable = args.hasArg(OPT_import_externref_table);
   ctx.arg.importUndefined = args.hasArg(OPT_import_undefined);
   ctx.arg.libcallThreadContext = args.hasArg(OPT_libcall_thread_context);
   ctx.arg.ltoo = args::getInteger(args, OPT_lto_O, 2);
@@ -777,6 +779,10 @@ static void checkOptions(opt::InputArgList &args) {
 
   if (ctx.arg.importTable && ctx.arg.exportTable)
     error("--import-table and --export-table may not be used together");
+
+  if (ctx.arg.importExternrefTable && ctx.arg.exportExternrefTable)
+    error("--import-externref-table and --export-externref-table may not be "
+          "used together");
 
   if (ctx.arg.relocatable) {
     if (!ctx.arg.entry.empty())
@@ -1512,6 +1518,9 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   // Provide the indirect function table if needed.
   ctx.sym.indirectFunctionTable =
       symtab->resolveIndirectFunctionTable(/*required =*/false);
+
+  // Provide the default externref table if needed.
+  ctx.sym.externrefTable = symtab->resolveExternrefTable(/*required =*/false);
 
   if (errorCount())
     return;

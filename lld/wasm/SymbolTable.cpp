@@ -900,6 +900,83 @@ TableSymbol *SymbolTable::createDefinedIndirectFunctionTable(StringRef name) {
   return sym;
 }
 
+TableSymbol *SymbolTable::createUndefinedExternrefTable(StringRef name) {
+  LLVM_DEBUG(llvm::dbgs() << "createUndefinedExternrefTable\n");
+  uint8_t limitsFlags = ctx.arg.is64.value_or(false)
+                            ? WASM_LIMITS_FLAG_IS_64
+                            : WASM_LIMITS_FLAG_NONE;
+  WasmLimits limits{limitsFlags, 0, 0, 0};
+  WasmTableType *type = make<WasmTableType>();
+  type->ElemType = ValType::EXTERNREF;
+  type->Limits = limits;
+  uint32_t flags =
+      ctx.arg.exportExternrefTable ? 0 : WASM_SYMBOL_VISIBILITY_HIDDEN;
+  flags |= WASM_SYMBOL_UNDEFINED;
+  Symbol *sym =
+      addUndefinedTable(name, name, defaultModule, flags, nullptr, type);
+  sym->markLive();
+  sym->forceExport = ctx.arg.exportExternrefTable;
+  return cast<TableSymbol>(sym);
+}
+
+TableSymbol *SymbolTable::createDefinedExternrefTable(StringRef name) {
+  LLVM_DEBUG(llvm::dbgs() << "createDefinedExternrefTable\n");
+  const uint32_t invalidIndex = -1;
+  uint8_t limitsFlags = ctx.arg.is64.value_or(false)
+                            ? WASM_LIMITS_FLAG_IS_64
+                            : WASM_LIMITS_FLAG_NONE;
+  WasmLimits limits{limitsFlags, 0, 0, 0};
+  WasmTableType type{ValType::EXTERNREF, limits};
+  WasmTable desc{invalidIndex, type, name};
+  InputTable *table = make<InputTable>(desc, nullptr);
+  uint32_t flags =
+      ctx.arg.exportExternrefTable ? 0 : WASM_SYMBOL_VISIBILITY_HIDDEN;
+  TableSymbol *sym = addSyntheticTable(name, flags, table);
+  sym->markLive();
+  sym->forceExport = ctx.arg.exportExternrefTable;
+  return sym;
+}
+
+// The default externref table is synthesized by the linker, much like the
+// indirect function table.  It is created when an input references the
+// `__externref_table` symbol, or when the user explicitly requests it via
+// --export-externref-table / --import-externref-table.
+TableSymbol *SymbolTable::resolveExternrefTable(bool required) {
+  Symbol *existing = find(externrefTableName);
+  if (existing) {
+    if (!isa<TableSymbol>(existing)) {
+      error(Twine("reserved symbol must be of type table: `") +
+            externrefTableName + "`");
+      return nullptr;
+    }
+    if (existing->isDefined()) {
+      error(Twine("reserved symbol must not be defined in input files: `") +
+            externrefTableName + "`");
+      return nullptr;
+    }
+  }
+
+  if (ctx.arg.importExternrefTable) {
+    if (existing) {
+      existing->importModule = defaultModule;
+      existing->importName = externrefTableName;
+      return cast<TableSymbol>(existing);
+    }
+    if (required)
+      return createUndefinedExternrefTable(externrefTableName);
+  } else if ((existing && existing->isLive()) || ctx.arg.exportExternrefTable ||
+             required) {
+    // A defined table is required.  Either because the user requested an
+    // exported table or because the table symbol is already live.  The existing
+    // table is guaranteed to be undefined due to the check above.
+    return createDefinedExternrefTable(externrefTableName);
+  }
+
+  // An externref table will only be present in the symbol table if needed by a
+  // reloc; if we get here, we don't need one.
+  return nullptr;
+}
+
 // Whether or not we need an indirect function table is usually a function of
 // whether an input declares a need for it.  However sometimes it's possible for
 // no input to need the indirect function table, but then a late
