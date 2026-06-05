@@ -1,0 +1,18 @@
+# RUN: llvm-mc -filetype=obj -triple=wasm32-unknown-unknown %p/Inputs/start.s -o %t.start.o
+# RUN: wasm-ld --export-externref-table -o %t.wasm %t.start.o
+# RUN: obj2yaml %t.wasm | FileCheck %s
+
+# Verify the --export-externref-table flag creates and exports the default
+# externref table, even when no input references it.
+
+# CHECK:        - Type:            TABLE
+# CHECK-NEXT:     Tables:
+# CHECK-NEXT:       - Index:           0
+# CHECK-NEXT:         ElemType:        EXTERNREF
+# CHECK-NEXT:         Limits:
+# CHECK-NEXT:           Minimum:         0x0
+# CHECK:        - Type:            EXPORT
+# CHECK-NEXT:     Exports:
+# CHECK:            - Name:            __externref_table
+# CHECK-NEXT:         Kind:            TABLE
+# CHECK-NEXT:         Index:           0

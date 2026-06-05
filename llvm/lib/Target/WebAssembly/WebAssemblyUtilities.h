@@ -60,6 +60,12 @@ MCSymbolWasm *
 getOrCreateFuncrefCallTableSymbol(MCContext &Ctx,
                                   const WebAssemblySubtarget *Subtarget);
 
+/// Returns the __externref_table, the default externref table synthesized by
+/// the linker, for use as a place to spill externref values.
+MCSymbolWasm *
+getOrCreateExternrefTableSymbol(MCContext &Ctx,
+                                const WebAssemblySubtarget *Subtarget);
+
 /// Find a catch instruction from an EH pad. Returns null if no catch
 /// instruction found or the catch is in an invalid location.
 MachineInstr *findCatch(MachineBasicBlock *EHPad);

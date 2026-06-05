@@ -123,6 +123,17 @@ public:
     setTableType(wasm::ValType::FUNCREF, flags);
   }
 
+  bool isExternRefTable() const {
+    return isTable() && hasTableType() &&
+           getTableType().ElemType == wasm::ValType::EXTERNREF;
+  }
+  void setExternRefTable(bool is64) {
+    setType(wasm::WASM_SYMBOL_TYPE_TABLE);
+    uint8_t flags =
+        is64 ? wasm::WASM_LIMITS_FLAG_IS_64 : wasm::WASM_LIMITS_FLAG_NONE;
+    setTableType(wasm::ValType::EXTERNREF, flags);
+  }
+
   void setUsedInGOT() const { IsUsedInGOT = true; }
   bool isUsedInGOT() const { return IsUsedInGOT; }
 
