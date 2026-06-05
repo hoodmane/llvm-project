@@ -979,6 +979,56 @@ static void finalizeIndirectFunctionTable() {
   ctx.sym.indirectFunctionTable->setLimits(limits);
 }
 
+// Lay out the __externref_table index space into bss / stack / heap regions,
+// mirroring Writer::layoutMemory, and fill in the boundary marker globals.
+//
+//  - bss   : statically-allocated global externref slots, [0, N)
+//  - stack : reserved externref spill stack, [N, N + S)
+//  - heap  : grows at runtime via table.grow, [N + S, ...)
+//
+// For now, the bss region is empty (N = 0); per-symbol slot allocation will
+// make N > 0 later.  The marker globals hold slot indices (not linear-memory
+// addresses); like other index/pointer globals they are i32, or i64 under
+// wasm64.
+static void finalizeExternrefTable() {
+  if (ctx.arg.relocatable)
+    return;
+
+  auto setIndex = [](GlobalSymbol *g, uint64_t value) {
+    if (auto *d = dyn_cast_or_null<DefinedGlobal>(g))
+      setGlobalPtr(d, value);
+  };
+
+  // TODO(externref bss): add out.externrefElemSec->numEntries() here once
+  // per-symbol externref slot allocation is implemented.
+  uint64_t index = 0;
+  setIndex(ctx.sym.externrefDataEnd, index);
+
+  // Externref spill stack.  Mirroring the linear-memory __stack_pointer, the
+  // pointer starts at the high end of the region and grows downward.
+  setIndex(ctx.sym.externrefStackLow, index);
+  index += ctx.arg.externrefStackSize;
+  setIndex(ctx.sym.externrefStackHigh, index);
+  setIndex(ctx.sym.externrefStackPointer, index);
+
+  // Heap follows the stack and grows at runtime.
+  setIndex(ctx.sym.externrefHeapBase, index);
+
+  if (!ctx.sym.externrefTable)
+    return;
+
+  if (shouldImport(ctx.sym.externrefTable) &&
+      !ctx.sym.externrefTable->hasTableNumber())
+    out.importSec->addImport(ctx.sym.externrefTable);
+
+  // The minimum size covers the bss and stack regions; the heap region grows
+  // at runtime, so the externref table is always left growable (no maximum).
+  WasmLimits limits = {0, index, 0, 0};
+  if (ctx.arg.is64.value_or(false))
+    limits.Flags |= WASM_LIMITS_FLAG_IS_64;
+  ctx.sym.externrefTable->setLimits(limits);
+}
+
 static void scanRelocations() {
   for (ObjFile *file : ctx.objectFiles) {
     LLVM_DEBUG(dbgs() << "scanRelocations: " << file->getName() << "\n");
@@ -1805,6 +1855,8 @@ void Writer::run() {
   scanRelocations();
   log("-- finalizeIndirectFunctionTable");
   finalizeIndirectFunctionTable();
+  log("-- finalizeExternrefTable");
+  finalizeExternrefTable();
   log("-- createSyntheticInitFunctions");
   createSyntheticInitFunctions();
   log("-- assignIndexes");

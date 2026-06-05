@@ -104,6 +104,9 @@ struct Config {
   // runtime).
   uint64_t tableBase;
   uint64_t zStackSize;
+  // Number of slots to reserve in the __externref_table for the externref
+  // spill stack (the table-index-space analog of -z stack-size).
+  uint64_t externrefStackSize;
   uint64_t pageSize;
   unsigned ltoPartitions;
   unsigned ltoo;
@@ -261,6 +264,17 @@ struct Ctx {
     // Default externref table, synthesized by the linker, used as a place to
     // store externref values (which cannot live in linear memory).
     TableSymbol *externrefTable;
+
+    // Boundary markers for the regions of the __externref_table, the
+    // table-index-space analogs of __data_end / __stack_low / __stack_high /
+    // __heap_base.  These are immutable globals holding slot
+    // indices (i32, or i64 under wasm64).  __externref_stack_pointer is the
+    // mutable stack pointer for the externref spill stack.
+    GlobalSymbol *externrefDataEnd;
+    GlobalSymbol *externrefStackLow;
+    GlobalSymbol *externrefStackHigh;
+    GlobalSymbol *externrefStackPointer;
+    GlobalSymbol *externrefHeapBase;
 
     // __wasm_set_tls_base
     // Function used to set TLS base in libcall thread context modules.

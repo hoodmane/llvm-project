@@ -641,6 +641,8 @@ static void readConfigs(opt::InputArgList &args) {
   ctx.arg.noGrowableMemory = args.hasArg(OPT_no_growable_memory);
   ctx.arg.zStackSize =
       args::getZOptionValue(args, OPT_z, "stack-size", WasmDefaultPageSize);
+  ctx.arg.externrefStackSize =
+      args::getZOptionValue(args, OPT_z, "externref-stack-size", 0);
   ctx.arg.pageSize = args::getInteger(args, OPT_page_size, WasmDefaultPageSize);
   if (ctx.arg.pageSize != 1 && ctx.arg.pageSize != WasmDefaultPageSize)
     error("--page_size=N must be either 1 or 65536");
@@ -999,6 +1001,25 @@ static void createSyntheticSymbols() {
   }
 }
 
+// The externref table ABI (and its region boundary globals) is only relevant
+// when the reference-types feature is enabled.  This is queried before
+// populateTargetFeatures runs, so we approximate that feature resolution by
+// consulting the explicit/extra feature flags and the input objects' "used"
+// features.
+static bool referenceTypesEnabled() {
+  auto contains = [](const std::optional<std::vector<std::string>> &opt) {
+    return opt && llvm::is_contained(*opt, "reference-types");
+  };
+  if (contains(ctx.arg.features) || contains(ctx.arg.extraFeatures))
+    return true;
+  for (ObjFile *file : ctx.objectFiles)
+    for (const auto &feature : file->getWasmObj()->getTargetFeatures())
+      if (feature.Prefix == WASM_FEATURE_PREFIX_USED &&
+          feature.Name == "reference-types")
+        return true;
+  return false;
+}
+
 static void createOptionalSymbols() {
   if (ctx.arg.relocatable)
     return;
@@ -1019,6 +1040,25 @@ static void createOptionalSymbols() {
     ctx.sym.heapEnd = symtab->addOptionalDataSymbol("__heap_end");
     ctx.sym.memoryBase = createOptionalGlobal("__memory_base", false);
     ctx.sym.tableBase = createOptionalGlobal("__table_base", false);
+
+    // Boundary markers for the __externref_table regions.  These are the
+    // table-index-space analogs of the linear-memory boundary symbols above.
+    // They are immutable globals holding slot indices (i32, or i64 under
+    // wasm64), except for the mutable externref spill stack pointer.  They are
+    // only relevant when the reference-types feature is in use, so that e.g.
+    // --export-all does not emit them for plain MVP programs.
+    if (referenceTypesEnabled()) {
+      ctx.sym.externrefDataEnd =
+          createOptionalGlobal("__externref_data_end", false);
+      ctx.sym.externrefStackLow =
+          createOptionalGlobal("__externref_stack_low", false);
+      ctx.sym.externrefStackHigh =
+          createOptionalGlobal("__externref_stack_high", false);
+      ctx.sym.externrefStackPointer =
+          createOptionalGlobal("__externref_stack_pointer", true);
+      ctx.sym.externrefHeapBase =
+          createOptionalGlobal("__externref_heap_base", false);
+    }
   }
 
   ctx.sym.firstPageEnd = symtab->addOptionalDataSymbol("__wasm_first_page_end");
@@ -1279,7 +1319,8 @@ static void splitSections() {
 
 static bool isKnownZFlag(StringRef s) {
   // For now, we only support a very limited set of -z flags
-  return s.starts_with("stack-size=") || s.starts_with("muldefs");
+  return s.starts_with("stack-size=") ||
+         s.starts_with("externref-stack-size=") || s.starts_with("muldefs");
 }
 
 // Report a warning for an unknown -z option.
@@ -1519,8 +1560,30 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   ctx.sym.indirectFunctionTable =
       symtab->resolveIndirectFunctionTable(/*required =*/false);
 
-  // Provide the default externref table if needed.
-  ctx.sym.externrefTable = symtab->resolveExternrefTable(/*required =*/false);
+  // The externref spill stack (and its table) only makes sense when the
+  // reference-types feature is enabled; the boundary globals that describe the
+  // stack region are gated on referenceTypesEnabled() in createOptionalSymbols.
+  // Reject an explicit -z externref-stack-size in that case rather than
+  // silently emitting an externref table without the corresponding feature.
+  if (ctx.arg.externrefStackSize != 0 && !referenceTypesEnabled())
+    error("-z externref-stack-size requires the reference-types feature");
+
+  // Provide the default externref table if needed.  In addition to the
+  // reloc-/flag-driven triggers in resolveExternrefTable, the table is required
+  // whenever the externref index space is in use: either a spill stack region
+  // was requested, or one of the externref region boundary globals is actually
+  // referenced by an input object.  We deliberately check isUsedInRegularObj
+  // rather than isLive so that --export-all (which force-defines the optional
+  // boundary globals) does not by itself pull in an externref table.
+  auto isReferenced = [](Symbol *s) { return s && s->isUsedInRegularObj; };
+  bool externrefTableRequired =
+      (ctx.arg.externrefStackSize != 0 && referenceTypesEnabled()) ||
+      isReferenced(ctx.sym.externrefDataEnd) ||
+      isReferenced(ctx.sym.externrefStackLow) ||
+      isReferenced(ctx.sym.externrefStackHigh) ||
+      isReferenced(ctx.sym.externrefStackPointer) ||
+      isReferenced(ctx.sym.externrefHeapBase);
+  ctx.sym.externrefTable = symtab->resolveExternrefTable(externrefTableRequired);
 
   if (errorCount())
     return;
