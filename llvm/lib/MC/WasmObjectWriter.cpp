@@ -647,6 +647,11 @@ WasmObjectWriter::getProvisionalValue(const MCAssembler &Asm,
   case wasm::R_WASM_TYPE_INDEX_LEB:
     // Provisional value is same as the index
     return getRelocationIndexValue(RelEntry);
+  case wasm::R_WASM_EXTERNREF_TABLE_INDEX_LEB:
+    // The resolved value is the symbol's slot in __externref_table, which is
+    // assigned by the linker. There is no slot index space at the MC level, so
+    // use the symbol index as the (readable) provisional value.
+    return getRelocationIndexValue(RelEntry);
   case wasm::R_WASM_FUNCTION_INDEX_LEB:
   case wasm::R_WASM_FUNCTION_INDEX_I32:
   case wasm::R_WASM_GLOBAL_INDEX_LEB:
@@ -761,6 +766,7 @@ void WasmObjectWriter::applyRelocations(
     case wasm::R_WASM_MEMORY_ADDR_LEB:
     case wasm::R_WASM_TAG_INDEX_LEB:
     case wasm::R_WASM_TABLE_NUMBER_LEB:
+    case wasm::R_WASM_EXTERNREF_TABLE_INDEX_LEB:
       writePatchableU32(Stream, Value, Offset);
       break;
     case wasm::R_WASM_MEMORY_ADDR_LEB64:

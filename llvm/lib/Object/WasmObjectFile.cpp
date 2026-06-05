@@ -1081,6 +1081,13 @@ Error WasmObjectFile::parseRelocSection(StringRef Name, ReadContext &Ctx) {
       if (!isValidTableSymbol(Reloc.Index))
         return badReloc("invalid table relocation");
       break;
+    case wasm::R_WASM_EXTERNREF_TABLE_INDEX_LEB:
+      // Carries the symbol whose slot in __externref_table is resolved by the
+      // linker. The symbol kind is finalized in a later phase; for now it is
+      // attributed to a data symbol.
+      if (!isValidDataSymbol(Reloc.Index))
+        return badReloc("invalid externref table relocation");
+      break;
     case wasm::R_WASM_TYPE_INDEX_LEB:
       if (Reloc.Index >= Signatures.size())
         return badReloc("invalid relocation type index");

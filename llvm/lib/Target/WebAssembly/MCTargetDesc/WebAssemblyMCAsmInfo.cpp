@@ -29,6 +29,7 @@ const MCAsmInfo::AtSpecifier atSpecifiers[] = {
     {WebAssembly::S_GOT, "GOT"},
     {WebAssembly::S_GOT_TLS, "GOT@TLS"},
     {WebAssembly::S_FUNCINDEX, "FUNCINDEX"},
+    {WebAssembly::S_EXTERNREF_TABLE_INDEX, "EXTERNREF_TABLE_INDEX"},
 };
 
 WebAssemblyMCAsmInfo::~WebAssemblyMCAsmInfo() = default; // anchor.

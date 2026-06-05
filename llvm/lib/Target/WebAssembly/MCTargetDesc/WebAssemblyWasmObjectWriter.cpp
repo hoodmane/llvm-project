@@ -94,6 +94,9 @@ unsigned WebAssemblyWasmObjectWriter::getRelocType(
     break;
   case WebAssembly::S_FUNCINDEX:
     return wasm::R_WASM_FUNCTION_INDEX_I32;
+  case WebAssembly::S_EXTERNREF_TABLE_INDEX:
+    // The immediate carries the symbol's slot index in __externref_table.
+    return wasm::R_WASM_EXTERNREF_TABLE_INDEX_LEB;
   }
 
   switch (unsigned(Fixup.getKind())) {
