@@ -3,10 +3,13 @@
 typedef void (*__funcref fn_funcref)(void);
 
 // Valid funcref table declaration (zero-length, static)
-static fn_funcref valid_table[0]; // no error expected
+static fn_funcref valid_table[0] __attribute__((wasmtable)); // no error expected
 
 // Invalid: non-zero length
-static fn_funcref bad_table[1]; // expected-error {{only zero-length WebAssembly tables are currently supported}}
+static fn_funcref bad_table[1] __attribute__((wasmtable)); // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}
+
+// Without the 'wasmtable' attribute, an array of a reference type is not a table.
+static fn_funcref not_a_table[0]; // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 
 // Array subscript on funcref table should be rejected
 void test_subscript(void) {
@@ -15,4 +18,4 @@ void test_subscript(void) {
 
 // Original reproducer from https://github.com/llvm/llvm-project/issues/140933
 // The declaration should be rejected (not static, non-zero length)
-extern fn_funcref issue_table[1]; // expected-error {{WebAssembly table must be static}}
+extern fn_funcref issue_table[1] __attribute__((wasmtable)); // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}

@@ -2,8 +2,8 @@
 // RUN: %clang_cc1 -triple wasm32 -target-feature +reference-types -disable-O0-optnone -emit-llvm %s -o - | opt -S -passes=mem2reg | FileCheck %s
 // REQUIRES: webassembly-registered-target
 
-static __externref_t table[0];
-static const __externref_t const_table[0];
+static __externref_t table[0] __attribute__((wasmtable));
+static const __externref_t const_table[0] __attribute__((wasmtable));
 
 // CHECK-LABEL: define {{[^@]+}}@test_builtin_wasm_table_get
 // CHECK-SAME: (i32 noundef [[INDEX:%.*]]) #[[ATTR0:[0-9]+]] {
@@ -79,7 +79,7 @@ void test_builtin_wasm_table_fill(int index, __externref_t ref, int nelem) {
   __builtin_wasm_table_fill(table, index, ref, nelem);
 }
 
-static __externref_t other_table[0];
+static __externref_t other_table[0] __attribute__((wasmtable));
 
 // CHECK-LABEL: define {{[^@]+}}@test_table_copy
 // CHECK-SAME: (i32 noundef [[DST_IDX:%.*]], i32 noundef [[SRC_IDX:%.*]], i32 noundef [[NELEM:%.*]]) #[[ATTR0]] {

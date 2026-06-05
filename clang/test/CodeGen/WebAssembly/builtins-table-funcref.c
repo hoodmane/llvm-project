@@ -3,7 +3,7 @@
 // REQUIRES: webassembly-registered-target
 
 typedef void (*__funcref funcref_t)();
-static funcref_t table[0];
+static funcref_t table[0] __attribute__((wasmtable));
 
 // CHECK-LABEL: define {{[^@]+}}@test_builtin_wasm_table_get
 // CHECK-SAME: (i32 noundef [[INDEX:%.*]]) #[[ATTR0:[0-9]+]] {
@@ -56,7 +56,7 @@ void test_builtin_wasm_table_fill(int index, funcref_t ref, int nelem) {
   __builtin_wasm_table_fill(table, index, ref, nelem);
 }
 
-static funcref_t other_table[0];
+static funcref_t other_table[0] __attribute__((wasmtable));
 
 // CHECK-LABEL: define {{[^@]+}}@test_table_copy
 // CHECK-SAME: (i32 noundef [[DST_IDX:%.*]], i32 noundef [[SRC_IDX:%.*]], i32 noundef [[NELEM:%.*]]) #[[ATTR0]] {

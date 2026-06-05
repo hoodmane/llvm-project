@@ -10,7 +10,7 @@
 
 // Unlike standard sizeless types, reftype globals are supported.
 __externref_t r1;
-static __externref_t table[0];
+static __externref_t table[0] __attribute__((wasmtable));
 
 #if (_cplusplus == 201103L)
 __externref_t func(__externref_t ref)  throw(__externref_t) { // expected-error {{WebAssembly reference type not allowed in exception specification}}
