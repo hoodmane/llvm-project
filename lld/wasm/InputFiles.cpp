@@ -219,6 +219,18 @@ uint64_t ObjFile::calcNewValue(const WasmRelocation &reloc, uint64_t tombstone,
     return getSectionSymbol(reloc.Index)->section->getOffset(reloc.Addend);
   case R_WASM_TABLE_NUMBER_LEB:
     return getTableSymbol(reloc.Index)->getTableNumber();
+  case R_WASM_EXTERNREF_TABLE_INDEX_LEB: {
+    // Undefined, shared, and undefined-weak symbols are not allocated a slot
+    // (see scanRelocations); like the R_WASM_MEMORY_ADDR_* cases above they
+    // resolve to the null/tombstone value.
+    if (isa<UndefinedData>(sym) || sym->isShared() || sym->isUndefWeak())
+      return 0;
+    auto *d = cast<DataSymbol>(sym);
+    // Every other reachable symbol was assigned a slot during scanRelocations
+    // (the same live chunks are scanned), so a missing index is a logic error.
+    assert(d->hasExternrefTableIndex());
+    return d->getExternrefTableIndex();
+  }
   default:
     llvm_unreachable("unknown relocation type");
   }

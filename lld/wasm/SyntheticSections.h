@@ -329,6 +329,28 @@ protected:
   std::vector<const FunctionSymbol *> indirectFunctions;
 };
 
+// Assigns each externref symbol that is the target of an
+// R_WASM_EXTERNREF_TABLE_INDEX_LEB relocation a slot in the linker-synthesized
+// __externref_table.  This is the externref analog of ElemSection's indirect
+// function table slot allocation.  Slots are assigned starting from 0 (the
+// table has its own index space, independent of __table_base) and occupy the
+// "bss" region of the table laid out by Writer::finalizeExternrefTable.
+//
+// The externref table defaults its slots to ref.null, so unlike the indirect
+// function table no element segment needs to be emitted to initialize the
+// allocated slots.  This section therefore only allocates slots and never
+// writes a body of its own.
+class ExternrefElemSection : public SyntheticSection {
+public:
+  ExternrefElemSection() : SyntheticSection(llvm::wasm::WASM_SEC_ELEM) {}
+  bool isNeeded() const override { return false; }
+  void addEntry(DataSymbol *sym);
+  uint32_t numEntries() const { return externrefSlots.size(); }
+
+protected:
+  std::vector<const DataSymbol *> externrefSlots;
+};
+
 class DataCountSection : public SyntheticSection {
 public:
   DataCountSection(ArrayRef<OutputSegment *> segments);
@@ -474,6 +496,7 @@ struct OutStruct {
   ExportSection *exportSec;
   StartSection *startSec;
   ElemSection *elemSec;
+  ExternrefElemSection *externrefElemSec;
   DataCountSection *dataCountSec;
   LinkingSection *linkingSec;
   NameSection *nameSec;

@@ -129,6 +129,7 @@ void InputChunk::relocate(uint8_t *buf) const {
     case R_WASM_TAG_INDEX_LEB:
     case R_WASM_MEMORY_ADDR_LEB:
     case R_WASM_TABLE_NUMBER_LEB:
+    case R_WASM_EXTERNREF_TABLE_INDEX_LEB:
       encodeULEB128(static_cast<uint32_t>(value), loc, 5);
       break;
     case R_WASM_MEMORY_ADDR_LEB64:
@@ -236,6 +237,7 @@ static unsigned writeCompressedReloc(uint8_t *buf, const WasmRelocation &rel,
   case R_WASM_MEMORY_ADDR_LEB:
   case R_WASM_MEMORY_ADDR_LEB64:
   case R_WASM_TABLE_NUMBER_LEB:
+  case R_WASM_EXTERNREF_TABLE_INDEX_LEB:
     return encodeULEB128(value, buf);
   case R_WASM_TABLE_INDEX_SLEB:
   case R_WASM_TABLE_INDEX_SLEB64:
@@ -272,6 +274,7 @@ static unsigned getRelocWidthPadded(const WasmRelocation &rel) {
   case R_WASM_TAG_INDEX_LEB:
   case R_WASM_MEMORY_ADDR_LEB:
   case R_WASM_TABLE_NUMBER_LEB:
+  case R_WASM_EXTERNREF_TABLE_INDEX_LEB:
   case R_WASM_TABLE_INDEX_SLEB:
   case R_WASM_TABLE_INDEX_REL_SLEB:
   case R_WASM_MEMORY_ADDR_SLEB:

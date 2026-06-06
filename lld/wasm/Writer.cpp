@@ -982,14 +982,19 @@ static void finalizeIndirectFunctionTable() {
 // Lay out the __externref_table index space into bss / stack / heap regions,
 // mirroring Writer::layoutMemory, and fill in the boundary marker globals.
 //
-//  - bss   : statically-allocated global externref slots, [0, N)
-//  - stack : reserved externref spill stack, [N, N + S)
-//  - heap  : grows at runtime via table.grow, [N + S, ...)
+//  - bss   : reserved null slot plus statically-allocated global externref
+//            slots, [0, B)
+//  - stack : reserved externref spill stack, [B, B + S)
+//  - heap  : grows at runtime via table.grow, [B + S, ...)
 //
-// For now, the bss region is empty (N = 0); per-symbol slot allocation will
-// make N > 0 later.  The marker globals hold slot indices (not linear-memory
-// addresses); like other index/pointer globals they are i32, or i64 under
-// wasm64.
+// When any symbol slots are allocated (N > 0, for symbols targeted by
+// R_WASM_EXTERNREF_TABLE_INDEX_LEB relocations) slot 0 is reserved as the
+// canonical null externref and the N symbol slots occupy [1, N + 1), so the bss
+// region size is B = N + 1.  When no symbols are allocated there is no reserved
+// slot (B = 0), so direct uses of __externref_table and stack-only layouts keep
+// slot 0 for themselves.  The marker globals hold slot indices (not
+// linear-memory addresses); like other index/pointer globals they are i32, or
+// i64 under wasm64.
 static void finalizeExternrefTable() {
   if (ctx.arg.relocatable)
     return;
@@ -999,9 +1004,13 @@ static void finalizeExternrefTable() {
       setGlobalPtr(d, value);
   };
 
-  // TODO(externref bss): add out.externrefElemSec->numEntries() here once
-  // per-symbol externref slot allocation is implemented.
-  uint64_t index = 0;
+  // The bss region holds the statically-allocated global externref slots, one
+  // per symbol that was the target of an R_WASM_EXTERNREF_TABLE_INDEX_LEB
+  // relocation (assigned during scanRelocations).  When it is non-empty it is
+  // prefixed by the reserved null slot at index 0, so it occupies [0, N + 1);
+  // otherwise it is empty.
+  uint32_t numSlots = out.externrefElemSec->numEntries();
+  uint64_t index = numSlots ? numSlots + 1 : 0;
   setIndex(ctx.sym.externrefDataEnd, index);
 
   // Externref spill stack.  Mirroring the linear-memory __stack_pointer, the
@@ -1781,6 +1790,7 @@ void Writer::createSyntheticSections() {
   out.exportSec = make<ExportSection>();
   out.startSec = make<StartSection>();
   out.elemSec = make<ElemSection>();
+  out.externrefElemSec = make<ExternrefElemSection>();
   out.producersSec = make<ProducersSection>();
   out.targetFeaturesSec = make<TargetFeaturesSection>();
   out.buildIdSec = make<BuildIdSection>();

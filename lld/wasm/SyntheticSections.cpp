@@ -459,6 +459,16 @@ static void ensureIndirectFunctionTable() {
         symtab->resolveIndirectFunctionTable(/*required =*/true);
 }
 
+// A relocation requesting an externref-table slot implies that the
+// __externref_table is needed, even if no input referenced the reserved table
+// symbol or a region boundary global directly.  Synthesize it on demand, the
+// same way ensureIndirectFunctionTable handles the indirect function table.
+static void ensureExternrefTable() {
+  if (!ctx.sym.externrefTable)
+    ctx.sym.externrefTable =
+        symtab->resolveExternrefTable(/*required =*/true);
+}
+
 void GlobalSection::addInternalGOTEntry(Symbol *sym) {
   assert(!isSealed);
   if (sym->requiresGOT)
@@ -619,6 +629,22 @@ void ElemSection::addEntry(FunctionSymbol *sym) {
     return;
   sym->setTableIndex(ctx.arg.tableBase + indirectFunctions.size());
   indirectFunctions.emplace_back(sym);
+}
+
+void ExternrefElemSection::addEntry(DataSymbol *sym) {
+  if (sym->hasExternrefTableIndex())
+    return;
+  ensureExternrefTable();
+  // The externref table has its own index space starting at 0, so (unlike the
+  // indirect function table) there is no __table_base offset.  Slot 0 is
+  // reserved as the canonical null externref, so the first allocated symbol
+  // resolves to index 1; undefined-weak/shared references (which resolve to 0,
+  // see ObjFile::calcNewValue) therefore observe null rather than aliasing a
+  // real symbol's slot.  The reserved slot plus the allocated slots form the
+  // table's bss region; Writer::finalizeExternrefTable places the spill stack
+  // and heap regions after them.
+  sym->setExternrefTableIndex(externrefSlots.size() + 1);
+  externrefSlots.emplace_back(sym);
 }
 
 void ElemSection::writeBody() {
