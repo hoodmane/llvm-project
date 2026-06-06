@@ -110,6 +110,25 @@ void scanRelocations(InputChunk *chunk) {
         break;
       out.elemSec->addEntry(cast<FunctionSymbol>(sym));
       break;
+    case R_WASM_EXTERNREF_TABLE_INDEX_LEB:
+      // Assign the symbol a slot in the __externref_table.  The slot's index
+      // is the resolved value of the relocation.
+      //
+      // Skip this in relocatable mode: the relocation is passed through to the
+      // final link, which performs slot allocation.  Allocating here would also
+      // synthesize a defined __externref_table that finalizeExternrefTable
+      // leaves unsized and without a symbol-table entry, producing an object
+      // that cannot be re-linked.
+      //
+      // Skip undefined, shared, and undefined-weak symbols, mirroring the
+      // R_WASM_MEMORY_ADDR_* handling in calcNewValue: such a symbol is not a
+      // statically-allocated slot in this module's table, so it gets no bss
+      // slot and resolves to the null/tombstone value instead.  (A plain
+      // undefined symbol is additionally diagnosed by reportUndefined below.)
+      if (!ctx.arg.relocatable && !isa<UndefinedData>(sym) &&
+          !sym->isShared() && !sym->isUndefWeak())
+        out.externrefElemSec->addEntry(cast<DataSymbol>(sym));
+      break;
     case R_WASM_GLOBAL_INDEX_LEB:
     case R_WASM_GLOBAL_INDEX_I32:
       if (!isa<GlobalSymbol>(sym))

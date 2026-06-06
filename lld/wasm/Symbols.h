@@ -300,9 +300,28 @@ public:
            s->kind() == SharedDataKind;
   }
 
+  // Get/set the slot index assigned to this symbol in the linker-synthesized
+  // __externref_table.  A global externref variable is represented as a data
+  // symbol whose link-time value (requested via
+  // R_WASM_EXTERNREF_TABLE_INDEX_LEB) is its slot in that table.  The slot is
+  // assigned by ExternrefElemSection::addEntry.
+  uint32_t getExternrefTableIndex() const {
+    assert(externrefTableIndex != INVALID_INDEX);
+    return externrefTableIndex;
+  }
+  void setExternrefTableIndex(uint32_t index) {
+    assert(externrefTableIndex == INVALID_INDEX);
+    externrefTableIndex = index;
+  }
+  bool hasExternrefTableIndex() const {
+    return externrefTableIndex != INVALID_INDEX;
+  }
+
 protected:
   DataSymbol(StringRef name, Kind k, uint32_t flags, InputFile *f)
       : Symbol(name, k, flags, f) {}
+
+  uint32_t externrefTableIndex = INVALID_INDEX;
 };
 
 class DefinedData : public DataSymbol {
