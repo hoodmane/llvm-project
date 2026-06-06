@@ -116,6 +116,9 @@ MCOperand WebAssemblyMCInstLower::lowerSymbolOperand(const MachineOperand &MO,
     case WebAssemblyII::MO_TABLE_BASE_REL:
       Spec = WebAssembly::S_TBREL;
       break;
+    case WebAssemblyII::MO_EXTERNREF_TABLE_INDEX:
+      Spec = WebAssembly::S_EXTERNREF_TABLE_INDEX;
+      break;
     default:
       llvm_unreachable("Unknown target flag on GV operand");
   }

@@ -71,6 +71,16 @@ def : Pat<(WebAssemblyTableSet mcsym:$table, i32:$idx, funcref:$r),
           (TABLE_SET_FUNCREF mcsym:$table, i32:$idx, funcref:$r)>,
           Requires<[HasReferenceTypes]>;
 
+// Accessing a global externref variable lowers to table.get/table.set against
+// the linker-synthesized __externref_table, which is referenced as an MCSymbol
+// rather than a tglobaladdr.
+def : Pat<(externref (WebAssemblyTableGet mcsym:$table, i32:$idx)),
+          (TABLE_GET_EXTERNREF mcsym:$table, i32:$idx)>,
+          Requires<[HasReferenceTypes]>;
+def : Pat<(WebAssemblyTableSet mcsym:$table, i32:$idx, externref:$r),
+          (TABLE_SET_EXTERNREF mcsym:$table, i32:$idx, externref:$r)>,
+          Requires<[HasReferenceTypes]>;
+
 defm TABLE_SIZE : I<(outs I32:$sz), (ins table32_op:$table),
                     (outs), (ins table32_op:$table),
                     [(set I32:$sz, (int_wasm_table_size (WebAssemblyWrapper tglobaladdr:$table)))],

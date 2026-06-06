@@ -1840,6 +1840,48 @@ static std::optional<unsigned> IsWebAssemblyLocal(SDValue Op,
   return WebAssemblyFrameLowering::getLocalForStackObject(MF, FI->getIndex());
 }
 
+// A global variable whose value type is a WebAssembly reference type cannot
+// live in linear memory. Instead it names a slot in the linker-synthesized
+// __externref_table, accessed via table.get/table.set. Such a global is an
+// ordinary (data) GlobalAddress (not in the wasm-var address space, which is
+// reserved for real wasm globals) whose loaded/stored value is a reference
+// type.
+static const GlobalAddressSDNode *IsExternrefTableSlot(SDValue Base, EVT VT) {
+  if (VT != MVT::externref)
+    return nullptr;
+  const auto *GA = dyn_cast<GlobalAddressSDNode>(Base);
+  if (!GA || WebAssembly::isWasmVarAddressSpace(GA->getAddressSpace()))
+    return nullptr;
+  return GA;
+}
+
+// Build the `i32.const sym@EXTERNREF_TABLE_INDEX` slot-index operand for a
+// table.get/table.set against __externref_table. The immediate carries an
+// R_WASM_EXTERNREF_TABLE_INDEX_LEB relocation resolved to the symbol's slot.
+static SDValue getExternrefTableSlotIndex(const GlobalAddressSDNode *GA,
+                                          const SDLoc &DL, SelectionDAG &DAG) {
+  // The slot index names a whole table entry; a byte offset into it is
+  // meaningless. Reject it here so a release build diagnoses the bad input
+  // instead of silently dropping the offset and referencing the wrong slot.
+  if (GA->getOffset() != 0)
+    report_fatal_error(
+        "unexpected offset on a global externref table slot symbol", false);
+  // The slot index must be materialized as an i32.const immediate carrying the
+  // table-index relocation. Under PIC the i32 global-address Wrapper is instead
+  // lowered through global.get (a GOT access), which is not a valid lowering
+  // for a table slot index: on wasm32 it silently emits a global.get carrying
+  // the table-index relocation, and on wasm64 it fails to select at all. Reject
+  // PIC here with a clear diagnostic until the PIC relocation model for table
+  // slot indices is defined.
+  if (DAG.getTarget().isPositionIndependent())
+    report_fatal_error(
+        "reference-type globals are not yet supported with PIC", false);
+  SDValue Sym = DAG.getTargetGlobalAddress(
+      GA->getGlobal(), DL, MVT::i32, /*offset=*/0,
+      WebAssemblyII::MO_EXTERNREF_TABLE_INDEX);
+  return DAG.getNode(WebAssemblyISD::Wrapper, DL, MVT::i32, Sym);
+}
+
 SDValue WebAssemblyTargetLowering::LowerStore(SDValue Op,
                                               SelectionDAG &DAG) const {
   SDLoc DL(Op);
@@ -1856,6 +1898,24 @@ SDValue WebAssemblyTargetLowering::LowerStore(SDValue Op,
     SDVTList Tys = DAG.getVTList(MVT::Other);
     SDValue Ops[] = {SN->getChain(), Value, Base};
     return DAG.getMemIntrinsicNode(WebAssemblyISD::GLOBAL_SET, DL, Tys, Ops,
+                                   SN->getMemoryVT(), SN->getMemOperand());
+  }
+
+  if (const GlobalAddressSDNode *GA =
+          IsExternrefTableSlot(Base, Value.getValueType())) {
+    if (!Offset->isUndef())
+      report_fatal_error(
+          "unexpected offset when storing to a global externref", false);
+
+    MachineFunction &MF = DAG.getMachineFunction();
+    MVT PtrVT = getPointerTy(DAG.getDataLayout());
+    MCSymbolWasm *Table =
+        WebAssembly::getOrCreateExternrefTableSymbol(MF.getContext(), Subtarget);
+    SDValue TableSym = DAG.getMCSymbol(Table, PtrVT);
+    SDValue Idx = getExternrefTableSlotIndex(GA, DL, DAG);
+    SDVTList Tys = DAG.getVTList(MVT::Other);
+    SDValue Ops[] = {SN->getChain(), TableSym, Idx, Value};
+    return DAG.getMemIntrinsicNode(WebAssemblyISD::TABLE_SET, DL, Tys, Ops,
                                    SN->getMemoryVT(), SN->getMemOperand());
   }
 
@@ -1893,6 +1953,24 @@ SDValue WebAssemblyTargetLowering::LowerLoad(SDValue Op,
     SDVTList Tys = DAG.getVTList(LN->getValueType(0), MVT::Other);
     SDValue Ops[] = {LN->getChain(), Base};
     return DAG.getMemIntrinsicNode(WebAssemblyISD::GLOBAL_GET, DL, Tys, Ops,
+                                   LN->getMemoryVT(), LN->getMemOperand());
+  }
+
+  if (const GlobalAddressSDNode *GA =
+          IsExternrefTableSlot(Base, LN->getValueType(0))) {
+    if (!Offset->isUndef())
+      report_fatal_error(
+          "unexpected offset when loading from a global externref", false);
+
+    MachineFunction &MF = DAG.getMachineFunction();
+    MVT PtrVT = getPointerTy(DAG.getDataLayout());
+    MCSymbolWasm *Table =
+        WebAssembly::getOrCreateExternrefTableSymbol(MF.getContext(), Subtarget);
+    SDValue TableSym = DAG.getMCSymbol(Table, PtrVT);
+    SDValue Idx = getExternrefTableSlotIndex(GA, DL, DAG);
+    SDVTList Tys = DAG.getVTList(MVT::externref, MVT::Other);
+    SDValue Ops[] = {LN->getChain(), TableSym, Idx};
+    return DAG.getMemIntrinsicNode(WebAssemblyISD::TABLE_GET, DL, Tys, Ops,
                                    LN->getMemoryVT(), LN->getMemOperand());
   }
 
