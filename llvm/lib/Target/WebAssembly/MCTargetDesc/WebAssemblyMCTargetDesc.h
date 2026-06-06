@@ -120,6 +120,13 @@ enum TOF {
   // Only applicable to function symbols.
   MO_TABLE_BASE_REL,
 
+  // On a symbol operand this indicates that the immediate is the symbol's slot
+  // index in the linker-synthesized __externref_table. Used to materialize an
+  // `i32.const sym@EXTERNREF_TABLE_INDEX` carrying an
+  // R_WASM_EXTERNREF_TABLE_INDEX_LEB relocation. Only applicable to externref
+  // table-slot symbols.
+  MO_EXTERNREF_TABLE_INDEX,
+
   // On a block signature operand this indicates that this is a destination
   // block of a (catch_ref) clause in try_table.
   MO_CATCH_BLOCK_SIG,

@@ -433,6 +433,23 @@ def : Pat<(i32 (WebAssemblyWrapper tglobaladdr:$addr)),
 def : Pat<(i64 (WebAssemblyWrapper tglobaladdr:$addr)),
           (CONST_I64 tglobaladdr:$addr)>, Requires<[IsNotPIC, HasAddr64]>;
 
+// On wasm64 an address-sized Wrapper is i64 (handled above), so an i32-typed
+// Wrapper of a global address is unambiguous: it can only be a table slot
+// index, which is always an i32 immediate regardless of the pointer width
+// (e.g. the externref table slot index `sym@EXTERNREF_TABLE_INDEX`). Because a
+// real wasm64 global address would be i64-typed, there is no other source of an
+// i32 global-address Wrapper to disambiguate against, so materialize it as a
+// CONST_I32.
+//
+// Note: this only covers the non-PIC case. Under PIC the i32 global-address
+// Wrapper patterns below route through GLOBAL_GET (a GOT load), which is not a
+// valid lowering for a table slot index. Reference-type globals under PIC are
+// therefore not yet supported and will fail with "Cannot select" rather than
+// miscompile; supporting them requires defining the PIC relocation model for
+// table slot indices first.
+def : Pat<(i32 (WebAssemblyWrapper tglobaladdr:$addr)),
+          (CONST_I32 tglobaladdr:$addr)>, Requires<[IsNotPIC, HasAddr64]>;
+
 def : Pat<(i32 (WebAssemblyWrapper tglobaladdr:$addr)),
           (GLOBAL_GET_I32 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr32]>;
 def : Pat<(i64 (WebAssemblyWrapper tglobaladdr:$addr)),
