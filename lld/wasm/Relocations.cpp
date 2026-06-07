@@ -111,8 +111,11 @@ void scanRelocations(InputChunk *chunk) {
       out.elemSec->addEntry(cast<FunctionSymbol>(sym));
       break;
     case R_WASM_EXTERNREF_TABLE_INDEX_LEB:
+    case R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB:
       // Assign the symbol a slot in the __externref_table.  The slot's index
-      // is the resolved value of the relocation.
+      // is the resolved value of the relocation (relative to
+      // __externref_table_base for the _REL_ form, emitted under PIC for a
+      // symbol defined in this module).
       //
       // Skip this in relocatable mode: the relocation is passed through to the
       // final link, which performs slot allocation.  Allocating here would also
@@ -131,8 +134,16 @@ void scanRelocations(InputChunk *chunk) {
       break;
     case R_WASM_GLOBAL_INDEX_LEB:
     case R_WASM_GLOBAL_INDEX_I32:
-      if (!isa<GlobalSymbol>(sym))
+      if (!isa<GlobalSymbol>(sym)) {
+        // A GOT access of a global externref variable (`global.get sym@GOT`
+        // emitted under PIC for a preemptible symbol).  Besides the GOT entry,
+        // a symbol defined in this module needs a __externref_table slot: the
+        // GOT entry resolves to __externref_table_base + that slot at load time.
+        if (sym->isExternref() && !ctx.arg.relocatable &&
+            !isa<UndefinedData>(sym) && !sym->isShared() && !sym->isUndefWeak())
+          out.externrefElemSec->addEntry(cast<DataSymbol>(sym));
         addGOTEntry(sym);
+      }
       break;
     case R_WASM_MEMORY_ADDR_TLS_SLEB:
     case R_WASM_MEMORY_ADDR_TLS_SLEB64:

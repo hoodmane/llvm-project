@@ -723,11 +723,22 @@ static void setConfigs() {
     if (ctx.arg.exportTable)
       error("-shared/-pie is incompatible with --export-table");
     ctx.arg.importTable = true;
+    // Mirror the indirect function table: under PIC the externref table is
+    // shared through the environment so that __externref_table_base (the
+    // per-module slot offset) is meaningful and global externref variables can
+    // be shared across modules.  An executable can opt to define and export it
+    // instead via --export-externref-table.
+    if (!ctx.arg.exportExternrefTable)
+      ctx.arg.importExternrefTable = true;
   } else {
     // Default table base.  Defaults to 1, reserving 0 for the NULL function
     // pointer.
     if (!ctx.arg.tableBase)
       ctx.arg.tableBase = 1;
+    // Likewise reserve __externref_table slot 0 for the null externref in
+    // executables.  Under PIC this stays 0: this module's slots are placed at
+    // the runtime __externref_table_base offset instead.
+    ctx.arg.externrefTableBase = 1;
     // The default offset for static/global data, for when --global-base is
     // not specified on the command line.  The precise value of 1024 is
     // somewhat arbitrary, and pre-dates wasm-ld (Its the value that
@@ -922,6 +933,8 @@ static DefinedGlobal *createOptionalGlobal(StringRef name, bool isMutable) {
   return symtab->addOptionalGlobalSymbol(name, g);
 }
 
+static bool referenceTypesEnabled();
+
 // Create ABI-defined synthetic symbols
 static void createSyntheticSymbols() {
   if (ctx.arg.relocatable)
@@ -966,6 +979,11 @@ static void createSyntheticSymbols() {
     ctx.sym.tableBase = createUndefinedGlobal("__table_base", globalType);
     ctx.sym.memoryBase->markLive();
     ctx.sym.tableBase->markLive();
+    // The externref analog of __table_base (__externref_table_base) is also
+    // imported under PIC, but only when the reference-types feature is in use.
+    // Whether that feature is enabled depends on the input objects' "used"
+    // features, which have not been parsed yet here, so it is created later by
+    // createExternrefTableBaseSymbol() once the inputs are available.
   } else {
     // For non-PIC code
     ctx.sym.stackPointer =
@@ -1018,6 +1036,34 @@ static bool referenceTypesEnabled() {
           feature.Name == "reference-types")
         return true;
   return false;
+}
+
+// The externref analog of __table_base, used to offset this module's global
+// externref slots within a (possibly shared) __externref_table.  Like
+// __table_base/__memory_base it is imported under PIC, but only when the
+// reference-types feature is actually in use.  That determination consults the
+// input objects' "used" features, so this must run after the inputs have been
+// parsed (unlike the other PIC base globals, which are created unconditionally
+// in createSyntheticSymbols).  If an object already created an undefined
+// reference to it, addUndefinedGlobal merges with that existing symbol.
+//
+// It is marked live (hence imported) eagerly, like the other PIC base globals,
+// rather than lazily on reference: the base is needed both by the common
+// defined-symbol path (R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB, which references it
+// directly) and by __wasm_apply_global_relocs for an internal externref GOT
+// entry.  The latter is only discovered during scanRelocations, which runs
+// after calculateImports has already fixed the imported-global numbering, so a
+// late import there would be mis-indexed.  Importing it up front avoids that.
+static void createExternrefTableBaseSymbol() {
+  if (ctx.arg.relocatable || !ctx.isPic || !referenceTypesEnabled())
+    return;
+  static llvm::wasm::WasmGlobalType globalTypeI32 = {WASM_TYPE_I32, false};
+  static llvm::wasm::WasmGlobalType globalTypeI64 = {WASM_TYPE_I64, false};
+  auto *globalType =
+      ctx.arg.is64.value_or(false) ? &globalTypeI64 : &globalTypeI32;
+  ctx.sym.externrefTableBase =
+      createUndefinedGlobal("__externref_table_base", globalType);
+  ctx.sym.externrefTableBase->markLive();
 }
 
 static void createOptionalSymbols() {
@@ -1517,6 +1563,10 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
     return;
 
   createOptionalSymbols();
+
+  // Now that the inputs are parsed, import __externref_table_base if the
+  // reference-types feature is in use (see createExternrefTableBaseSymbol).
+  createExternrefTableBaseSymbol();
 
   // Resolve any variant symbols that were created due to signature
   // mismatchs.

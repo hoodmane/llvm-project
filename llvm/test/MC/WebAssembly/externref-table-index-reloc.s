@@ -12,10 +12,20 @@ get_slot:
   nop
   nop
   nop
+  i32.const 0
+  nop
+  nop
+  nop
+  nop
+  i32.add
   end_function
 
 # PRINT: .reloc get_slot+2, R_WASM_EXTERNREF_TABLE_INDEX_LEB, externref_global
 .reloc get_slot + 2, R_WASM_EXTERNREF_TABLE_INDEX_LEB, externref_global
+# The _REL_ variant (emitted under PIC) carries the slot index relative to
+# __externref_table_base.
+# PRINT: .reloc get_slot+8, R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB, externref_global
+.reloc get_slot + 8, R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB, externref_global
 
 .section .data,"",@
 externref_global:
@@ -28,8 +38,16 @@ externref_global:
 # CHECK-NEXT:     Offset: 0x4
 # CHECK-NEXT:     Symbol: externref_global
 # CHECK-NEXT:   }
+# CHECK-NEXT:   Relocation {
+# CHECK-NEXT:     Type: R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB (28)
+# CHECK-NEXT:     Offset: 0xA
+# CHECK-NEXT:     Symbol: externref_global
+# CHECK-NEXT:   }
 # CHECK-NEXT: }
 
 # YAML:      - Type:            R_WASM_EXTERNREF_TABLE_INDEX_LEB
 # YAML-NEXT:        Index:           {{[0-9]+}}
 # YAML-NEXT:        Offset:          0x4
+# YAML-NEXT:      - Type:            R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB
+# YAML-NEXT:        Index:           {{[0-9]+}}
+# YAML-NEXT:        Offset:          0xA

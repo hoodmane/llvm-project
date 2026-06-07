@@ -583,6 +583,7 @@ void ScalarBitSetTraits<WasmYAML::SymbolFlags>::bitset(
   BCaseMask(NO_STRIP, NO_STRIP);
   BCaseMask(TLS, TLS);
   BCaseMask(ABSOLUTE, ABSOLUTE);
+  BCaseMask(EXTERNREF, EXTERNREF);
 #undef BCaseMask
 }
 

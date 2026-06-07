@@ -51,6 +51,9 @@ const EnumEntry<unsigned> WasmSymbolFlags[] = {
   ENUM_ENTRY(EXPORTED),
   ENUM_ENTRY(EXPLICIT_NAME),
   ENUM_ENTRY(NO_STRIP),
+  ENUM_ENTRY(TLS),
+  ENUM_ENTRY(ABSOLUTE),
+  ENUM_ENTRY(EXTERNREF),
 #undef ENUM_ENTRY
 };
 

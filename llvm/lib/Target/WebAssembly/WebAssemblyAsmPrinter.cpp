@@ -188,6 +188,14 @@ void WebAssemblyAsmPrinter::emitGlobalVariable(const GlobalVariable *GV) {
   }
 
   if (!WebAssembly::isWasmVarAddressSpace(GV->getAddressSpace())) {
+    // A global variable whose value type is a WebAssembly reference type lives
+    // in the __externref_table rather than linear memory.  Mark its (data)
+    // symbol so the linker gives its GOT entry externref-table semantics under
+    // PIC.
+    if (WebAssembly::isWebAssemblyExternrefType(GV->getValueType())) {
+      auto *Sym = static_cast<MCSymbolWasm *>(getSymbol(GV));
+      Sym->setExternref();
+    }
     AsmPrinter::emitGlobalVariable(GV);
     return;
   }
@@ -235,7 +243,8 @@ MCSymbol *WebAssemblyAsmPrinter::getOrCreateWasmSymbol(StringRef Name) {
   // Clang-provided symbols.
   if (Name == "__stack_pointer" || Name == "__tls_base" ||
       Name == "__memory_base" || Name == "__table_base" ||
-      Name == "__tls_size" || Name == "__tls_align") {
+      Name == "__externref_table_base" || Name == "__tls_size" ||
+      Name == "__tls_align") {
     bool Mutable = Name == "__stack_pointer" || Name == "__tls_base";
     WasmSym->setType(wasm::WASM_SYMBOL_TYPE_GLOBAL);
     WasmSym->setGlobalType(wasm::WasmGlobalType{

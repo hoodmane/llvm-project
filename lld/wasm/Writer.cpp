@@ -1005,12 +1005,15 @@ static void finalizeExternrefTable() {
   };
 
   // The bss region holds the statically-allocated global externref slots, one
-  // per symbol that was the target of an R_WASM_EXTERNREF_TABLE_INDEX_LEB
-  // relocation (assigned during scanRelocations).  When it is non-empty it is
-  // prefixed by the reserved null slot at index 0, so it occupies [0, N + 1);
-  // otherwise it is empty.
+  // per symbol that was the target of an R_WASM_EXTERNREF_TABLE_INDEX_LEB /
+  // R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB relocation (assigned during
+  // scanRelocations).  When it is non-empty it is prefixed by the
+  // ctx.arg.externrefTableBase reserved slots (1 for executables, reserving the
+  // null externref at index 0), so it occupies [0, externrefTableBase + N);
+  // otherwise it is empty.  (The boundary globals only exist in non-PIC links;
+  // under PIC the table is loader-managed and these are no-ops.)
   uint32_t numSlots = out.externrefElemSec->numEntries();
-  uint64_t index = numSlots ? numSlots + 1 : 0;
+  uint64_t index = numSlots ? ctx.arg.externrefTableBase + numSlots : 0;
   setIndex(ctx.sym.externrefDataEnd, index);
 
   // Externref spill stack.  Mirroring the linear-memory __stack_pointer, the

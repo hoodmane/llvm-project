@@ -307,7 +307,14 @@ void ImportSection::writeBody() {
     import.Kind = WASM_EXTERNAL_GLOBAL;
     auto ptrType = is64 ? WASM_TYPE_I64 : WASM_TYPE_I32;
     import.Global = {static_cast<uint8_t>(ptrType), true};
-    if (isa<DataSymbol>(sym))
+    if (sym->isExternref())
+      // A global externref variable's GOT entry holds its slot index in the
+      // shared __externref_table, not a linear-memory address (GOT.mem) or a
+      // function table index (GOT.func).  The dynamic linker resolves it to the
+      // symbol's __externref_table_base-relative slot.  This is the externref
+      // analog of GOT.func.
+      import.Module = "GOT.externref";
+    else if (isa<DataSymbol>(sym))
       import.Module = "GOT.mem";
     else
       import.Module = "GOT.func";
@@ -479,6 +486,27 @@ void GlobalSection::addInternalGOTEntry(Symbol *sym) {
   if (auto *F = dyn_cast<FunctionSymbol>(sym)) {
     ensureIndirectFunctionTable();
     out.elemSec->addEntry(F);
+  } else if (sym->isExternref()) {
+    // A global externref variable referenced via an internal GOT entry needs a
+    // __externref_table slot.  The GOT global holds the symbol's slot index in
+    // that table.
+    out.externrefElemSec->addEntry(cast<DataSymbol>(sym));
+    // Under PIC the GOT global is initialized to __externref_table_base + slot
+    // (see generateRelocationCode), so make sure that base global is live.  (In
+    // practice such symbols are reached via the base-relative relocation
+    // instead, so this path is rarely taken.)  An externref symbol implies the
+    // reference-types feature, so under PIC __externref_table_base has been
+    // created (createExternrefTableBaseSymbol), just like
+    // __table_base/__memory_base; generateRelocationCode relies on this too.
+    //
+    // In a non-PIC link there is no base global: the slot index is an absolute
+    // link-time constant and the GOT global is initialized to it directly (see
+    // writeBody), so __externref_table_base is neither created nor needed.
+    if (ctx.isPic) {
+      assert(ctx.sym.externrefTableBase &&
+             "externref GOT entry requires __externref_table_base under PIC");
+      ctx.sym.externrefTableBase->markLive();
+    }
   }
   internalGotSymbols.push_back(sym);
 }
@@ -493,16 +521,26 @@ void GlobalSection::generateRelocationCode(raw_ostream &os, bool TLS) const {
       continue;
 
     if (auto *d = dyn_cast<DefinedData>(sym)) {
-      // Get __memory_base
-      if (sym->isTLS())
-        writeGetTLSBase(ctx, os);
-      else {
+      if (sym->isExternref()) {
+        // Get __externref_table_base and add the symbol's slot index, the
+        // externref analog of the __table_base + table-index case below.
         writeU8(os, WASM_OPCODE_GLOBAL_GET, "GLOBAL_GET");
-        writeUleb128(os, ctx.sym.memoryBase->getGlobalIndex(), "__memory_base");
-      }
+        writeUleb128(os, ctx.sym.externrefTableBase->getGlobalIndex(),
+                     "__externref_table_base");
+        writePtrConst(os, d->getExternrefTableIndex(), is64, "offset");
+      } else {
+        // Get __memory_base
+        if (sym->isTLS())
+          writeGetTLSBase(ctx, os);
+        else {
+          writeU8(os, WASM_OPCODE_GLOBAL_GET, "GLOBAL_GET");
+          writeUleb128(os, ctx.sym.memoryBase->getGlobalIndex(),
+                       "__memory_base");
+        }
 
-      // Add the virtual address of the data symbol
-      writePtrConst(os, d->getVA(), is64, "offset");
+        // Add the virtual address of the data symbol
+        writePtrConst(os, d->getVA(), is64, "offset");
+      }
     } else if (auto *f = dyn_cast<FunctionSymbol>(sym)) {
       if (f->isStub)
         continue;
@@ -578,12 +616,20 @@ void GlobalSection::writeBody() {
       writeU8(os, WASM_OPCODE_END, "opcode:end");
     } else {
       WasmInitExpr initExpr;
-      if (auto *d = dyn_cast<DefinedData>(sym))
-        // In the sharedMemory case TLS globals are set during
-        // `__wasm_apply_global_tls_relocs`, but in the non-shared case
-        // we know the absolute value at link time.
-        initExpr = intConst(d->getVA(/*absolute=*/!ctx.arg.sharedMemory), is64);
-      else if (auto *f = dyn_cast<FunctionSymbol>(sym))
+      if (auto *d = dyn_cast<DefinedData>(sym)) {
+        if (sym->isExternref())
+          // A global externref's GOT entry holds its __externref_table slot
+          // index, not a memory address.  Under PIC this is fixed up to
+          // __externref_table_base + slot at load time (generateRelocationCode),
+          // but in a non-PIC link the slot is an absolute constant.
+          initExpr = intConst(d->getExternrefTableIndex(), is64);
+        else
+          // In the sharedMemory case TLS globals are set during
+          // `__wasm_apply_global_tls_relocs`, but in the non-shared case
+          // we know the absolute value at link time.
+          initExpr =
+              intConst(d->getVA(/*absolute=*/!ctx.arg.sharedMemory), is64);
+      } else if (auto *f = dyn_cast<FunctionSymbol>(sym))
         initExpr = intConst(f->isStub ? 0 : f->getTableIndex(), is64);
       else {
         assert(isa<UndefinedData>(sym) || isa<SharedData>(sym));
@@ -635,15 +681,17 @@ void ExternrefElemSection::addEntry(DataSymbol *sym) {
   if (sym->hasExternrefTableIndex())
     return;
   ensureExternrefTable();
-  // The externref table has its own index space starting at 0, so (unlike the
-  // indirect function table) there is no __table_base offset.  Slot 0 is
-  // reserved as the canonical null externref, so the first allocated symbol
-  // resolves to index 1; undefined-weak/shared references (which resolve to 0,
-  // see ObjFile::calcNewValue) therefore observe null rather than aliasing a
-  // real symbol's slot.  The reserved slot plus the allocated slots form the
-  // table's bss region; Writer::finalizeExternrefTable places the spill stack
-  // and heap regions after them.
-  sym->setExternrefTableIndex(externrefSlots.size() + 1);
+  // Slots are placed starting at ctx.arg.externrefTableBase, the externref
+  // analog of ctx.arg.tableBase.  For executables this is 1, reserving slot 0
+  // as the canonical null externref so that undefined-weak/shared references
+  // (which resolve to 0, see ObjFile::calcNewValue) observe null rather than
+  // aliasing a real symbol's slot.  Under PIC it is 0: this module's slots form
+  // a region that the loader places at the runtime __externref_table_base
+  // offset, and references add that base (R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB).
+  // The reserved slot plus the allocated slots form the table's bss region;
+  // Writer::finalizeExternrefTable places the spill stack and heap regions after
+  // them.
+  sym->setExternrefTableIndex(ctx.arg.externrefTableBase + externrefSlots.size());
   externrefSlots.emplace_back(sym);
 }
 

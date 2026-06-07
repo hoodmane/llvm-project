@@ -53,6 +53,13 @@ WebAssemblyMCInstLower::GetGlobalAddressSymbol(const MachineOperand &MO) const {
   const GlobalValue *Global = MO.getGlobal();
   if (!isa<Function>(Global)) {
     auto *WasmSym = static_cast<MCSymbolWasm *>(Printer.getSymbol(Global));
+    // A global variable whose value type is a WebAssembly reference type lives
+    // in the __externref_table rather than linear memory.  Mark its (data)
+    // symbol so the linker gives its GOT entry externref-table semantics under
+    // PIC.  This covers both defined and merely-referenced (e.g. imported)
+    // externref globals, since every use flows through here.
+    if (WebAssembly::isWebAssemblyExternrefType(Global->getValueType()))
+      WasmSym->setExternref();
     // If the symbol doesn't have an explicit WasmSymbolType yet and the
     // GlobalValue is actually a WebAssembly global, then ensure the symbol is a
     // WASM_SYMBOL_TYPE_GLOBAL.
@@ -118,6 +125,9 @@ MCOperand WebAssemblyMCInstLower::lowerSymbolOperand(const MachineOperand &MO,
       break;
     case WebAssemblyII::MO_EXTERNREF_TABLE_INDEX:
       Spec = WebAssembly::S_EXTERNREF_TABLE_INDEX;
+      break;
+    case WebAssemblyII::MO_EXTERNREF_TABLE_INDEX_REL:
+      Spec = WebAssembly::S_EXTERNREF_TABLE_INDEX_REL;
       break;
     default:
       llvm_unreachable("Unknown target flag on GV operand");

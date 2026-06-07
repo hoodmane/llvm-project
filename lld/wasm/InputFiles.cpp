@@ -219,7 +219,8 @@ uint64_t ObjFile::calcNewValue(const WasmRelocation &reloc, uint64_t tombstone,
     return getSectionSymbol(reloc.Index)->section->getOffset(reloc.Addend);
   case R_WASM_TABLE_NUMBER_LEB:
     return getTableSymbol(reloc.Index)->getTableNumber();
-  case R_WASM_EXTERNREF_TABLE_INDEX_LEB: {
+  case R_WASM_EXTERNREF_TABLE_INDEX_LEB:
+  case R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB: {
     // Undefined, shared, and undefined-weak symbols are not allocated a slot
     // (see scanRelocations); like the R_WASM_MEMORY_ADDR_* cases above they
     // resolve to the null/tombstone value.
@@ -229,7 +230,12 @@ uint64_t ObjFile::calcNewValue(const WasmRelocation &reloc, uint64_t tombstone,
     // Every other reachable symbol was assigned a slot during scanRelocations
     // (the same live chunks are scanned), so a missing index is a logic error.
     assert(d->hasExternrefTableIndex());
-    return d->getExternrefTableIndex();
+    uint32_t index = d->getExternrefTableIndex();
+    // The _REL_ form (emitted under PIC) is relative to __externref_table_base,
+    // mirroring R_WASM_TABLE_INDEX_REL_SLEB and __table_base for functions.
+    if (reloc.Type == R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB)
+      index -= ctx.arg.externrefTableBase;
+    return index;
   }
   default:
     llvm_unreachable("unknown relocation type");

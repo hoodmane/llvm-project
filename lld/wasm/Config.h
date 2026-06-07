@@ -103,6 +103,12 @@ struct Config {
   // for shared libraries (since they always added to a dynamic offset at
   // runtime).
   uint64_t tableBase;
+  // The __externref_table slot offset at which to place this module's global
+  // externref slots, the externref analog of tableBase.  Set to 1 for
+  // executables (reserving slot 0 for the null externref) and 0 for shared
+  // libraries / PIC (where slots are added to the runtime __externref_table_base
+  // offset).
+  uint64_t externrefTableBase;
   uint64_t zStackSize;
   // Number of slots to reserve in the __externref_table for the externref
   // spill stack (the table-index-space analog of -z stack-size).
@@ -254,6 +260,11 @@ struct Ctx {
     // __memory_base
     // Used in PIC code for offset of global data
     GlobalSymbol *memoryBase;
+
+    // __externref_table_base
+    // Used in PIC code for the offset of this module's region within a shared
+    // __externref_table, the externref analog of __table_base.
+    GlobalSymbol *externrefTableBase;
 
     // __indirect_function_table
     // Used as an address space for function pointers, with each function that
