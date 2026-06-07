@@ -191,6 +191,8 @@ bool Symbol::isHidden() const {
 
 bool Symbol::isTLS() const { return flags & WASM_SYMBOL_TLS; }
 
+bool Symbol::isExternref() const { return flags & WASM_SYMBOL_EXTERNREF; }
+
 void Symbol::setHidden(bool isHidden) {
   LLVM_DEBUG(dbgs() << "setHidden: " << name << " -> " << isHidden << "\n");
   flags &= ~WASM_SYMBOL_VISIBILITY_MASK;

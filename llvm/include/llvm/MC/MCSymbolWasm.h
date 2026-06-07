@@ -73,6 +73,11 @@ public:
     modifyFlags(wasm::WASM_SYMBOL_TLS, wasm::WASM_SYMBOL_TLS);
   }
 
+  bool isExternref() const { return getFlags() & wasm::WASM_SYMBOL_EXTERNREF; }
+  void setExternref() const {
+    modifyFlags(wasm::WASM_SYMBOL_EXTERNREF, wasm::WASM_SYMBOL_EXTERNREF);
+  }
+
   bool isWeak() const { return IsWeak; }
   void setWeak(bool isWeak) { IsWeak = isWeak; }
 

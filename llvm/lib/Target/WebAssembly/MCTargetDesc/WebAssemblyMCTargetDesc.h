@@ -127,6 +127,14 @@ enum TOF {
   // table-slot symbols.
   MO_EXTERNREF_TABLE_INDEX,
 
+  // On a symbol operand this indicates that the immediate is the symbol's slot
+  // index in the __externref_table relative to the __externref_table_base wasm
+  // global, the externref analog of MO_TABLE_BASE_REL. Used under PIC to
+  // materialize `sym@EXTERNREF_TABLE_INDEX_REL` carrying an
+  // R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB relocation. Only applicable to
+  // externref table-slot symbols.
+  MO_EXTERNREF_TABLE_INDEX_REL,
+
   // On a block signature operand this indicates that this is a destination
   // block of a (catch_ref) clause in try_table.
   MO_CATCH_BLOCK_SIG,

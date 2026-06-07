@@ -441,12 +441,11 @@ def : Pat<(i64 (WebAssemblyWrapper tglobaladdr:$addr)),
 // i32 global-address Wrapper to disambiguate against, so materialize it as a
 // CONST_I32.
 //
-// Note: this only covers the non-PIC case. Under PIC the i32 global-address
-// Wrapper patterns below route through GLOBAL_GET (a GOT load), which is not a
-// valid lowering for a table slot index. Reference-type globals under PIC are
-// therefore not yet supported and will fail with "Cannot select" rather than
-// miscompile; supporting them requires defining the PIC relocation model for
-// table slot indices first.
+// This covers the non-PIC case. Under PIC the externref table slot index is
+// computed at pointer width (i64 on wasm64) as `__externref_table_base + slot`
+// or loaded from a GOT global, and truncated to i32 afterwards (see
+// getExternrefTableSlotIndex), so it routes through the i64 Wrapper/WrapperREL
+// patterns below rather than this i32 one.
 def : Pat<(i32 (WebAssemblyWrapper tglobaladdr:$addr)),
           (CONST_I32 tglobaladdr:$addr)>, Requires<[IsNotPIC, HasAddr64]>;
 
@@ -459,6 +458,12 @@ def : Pat<(i32 (WebAssemblyWrapperREL tglobaladdr:$addr)),
           (CONST_I32 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr32]>;
 def : Pat<(i64 (WebAssemblyWrapperREL tglobaladdr:$addr)),
           (CONST_I64 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr64]>;
+// On wasm64 an i32-typed WrapperREL of a global address can only be an
+// externref table slot index relative to __externref_table_base (a real
+// address-sized REL value would be i64-typed). The slot index is an i32
+// immediate regardless of pointer width, so materialize it as a CONST_I32.
+def : Pat<(i32 (WebAssemblyWrapperREL tglobaladdr:$addr)),
+          (CONST_I32 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr64]>;
 
 def : Pat<(i32 (WebAssemblyWrapperREL tglobaltlsaddr:$addr)),
           (CONST_I32 tglobaltlsaddr:$addr)>, Requires<[HasAddr32]>;

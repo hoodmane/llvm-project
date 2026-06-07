@@ -38,6 +38,7 @@ enum Specifier {
   S_TLSREL,    // Memory address relative to __tls_base
   S_TYPEINDEX, // Reference to a symbol's type (signature)
   S_EXTERNREF_TABLE_INDEX, // Symbol's slot index in __externref_table
+  S_EXTERNREF_TABLE_INDEX_REL, // Slot index relative to __externref_table_base
 };
 }
 } // end namespace llvm

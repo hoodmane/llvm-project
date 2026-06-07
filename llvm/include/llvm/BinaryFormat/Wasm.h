@@ -259,6 +259,7 @@ const unsigned WASM_SYMBOL_EXPLICIT_NAME = 0x40;
 const unsigned WASM_SYMBOL_NO_STRIP = 0x80;
 const unsigned WASM_SYMBOL_TLS = 0x100;
 const unsigned WASM_SYMBOL_ABSOLUTE = 0x200;
+const unsigned WASM_SYMBOL_EXTERNREF = 0x400;
 
 #define WASM_RELOC(name, value) name = value,
 

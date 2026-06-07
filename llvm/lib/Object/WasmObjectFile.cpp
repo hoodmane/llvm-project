@@ -53,6 +53,8 @@ void WasmSymbol::print(raw_ostream &Out) const {
     Out << ", tls";
   if (Info.Flags & wasm::WASM_SYMBOL_ABSOLUTE)
     Out << ", absolute";
+  if (Info.Flags & wasm::WASM_SYMBOL_EXTERNREF)
+    Out << ", externref";
   if (Info.Flags & wasm::WASM_SYMBOL_EXPORTED)
     Out << ", exported";
   if (isUndefined())
@@ -1082,9 +1084,11 @@ Error WasmObjectFile::parseRelocSection(StringRef Name, ReadContext &Ctx) {
         return badReloc("invalid table relocation");
       break;
     case wasm::R_WASM_EXTERNREF_TABLE_INDEX_LEB:
+    case wasm::R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB:
       // Carries the symbol whose slot in __externref_table is resolved by the
-      // linker. The symbol kind is finalized in a later phase; for now it is
-      // attributed to a data symbol.
+      // linker (relative to __externref_table_base for the _REL_ form). The
+      // symbol kind is finalized in a later phase; for now it is attributed to
+      // a data symbol.
       if (!isValidDataSymbol(Reloc.Index))
         return badReloc("invalid externref table relocation");
       break;

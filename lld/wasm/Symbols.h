@@ -89,6 +89,9 @@ public:
   bool isWeak() const;
   bool isHidden() const;
   bool isTLS() const;
+  // A data symbol whose storage is a slot in the __externref_table rather than
+  // linear memory (a global variable of WebAssembly reference type).
+  bool isExternref() const;
 
   // Returns true if this symbol exists in a discarded (due to COMDAT) section
   bool isDiscarded() const;
