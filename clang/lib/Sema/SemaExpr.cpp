@@ -15151,10 +15151,10 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
   if (op->getType()->isObjCObjectType())
     return Context.getObjCObjectPointerType(op->getType());
 
-  // Cannot take the address of WebAssembly references or tables.
+  // Cannot take the address of WebAssembly funcrefs or tables.
   if (Context.getTargetInfo().getTriple().isWasm()) {
     QualType OpTy = op->getType();
-    if (OpTy.isWebAssemblyReferenceType()) {
+    if (OpTy.isWebAssemblyFuncrefType()) {
       Diag(OpLoc, diag::err_wasm_ca_reference)
           << 1 << OrigOp.get()->getSourceRange();
       return QualType();
