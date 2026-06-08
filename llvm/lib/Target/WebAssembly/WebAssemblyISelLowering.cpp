@@ -1978,6 +1978,35 @@ SDValue WebAssemblyTargetLowering::LowerStore(SDValue Op,
     return DAG.getNode(WebAssemblyISD::LOCAL_SET, DL, Tys, Ops);
   }
 
+  // An externref value cannot live in linear memory, so a store of one through
+  // an ordinary (computed) pointer addresses a slot in the linker-synthesized
+  // __externref_table: the pointer value *is* the table slot index. This
+  // happens when the address of an externref is taken and the externref is
+  // spilled to the externref stack region (see WebAssemblyRefTypeMem2Local),
+  // and when such a pointer is dereferenced after being passed around. A
+  // var-address-space (real wasm global/local) externref is handled above; it
+  // is not a table slot, so leave it for the diagnostic below.
+  if (Value.getValueType() == MVT::externref &&
+      !WebAssembly::isWasmVarAddressSpace(SN->getAddressSpace())) {
+    if (!Offset->isUndef())
+      report_fatal_error("unexpected offset when storing to an externref slot",
+                         false);
+
+    MachineFunction &MF = DAG.getMachineFunction();
+    MVT PtrVT = getPointerTy(DAG.getDataLayout());
+    MCSymbolWasm *Table =
+        WebAssembly::getOrCreateExternrefTableSymbol(MF.getContext(), Subtarget);
+    SDValue TableSym = DAG.getMCSymbol(Table, PtrVT);
+    // Table indices are i32 regardless of pointer width.
+    SDValue Idx = Base;
+    if (Base.getValueType() != MVT::i32)
+      Idx = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Base);
+    SDVTList Tys = DAG.getVTList(MVT::Other);
+    SDValue Ops[] = {SN->getChain(), TableSym, Idx, Value};
+    return DAG.getMemIntrinsicNode(WebAssemblyISD::TABLE_SET, DL, Tys, Ops,
+                                   SN->getMemoryVT(), SN->getMemOperand());
+  }
+
   if (WebAssembly::isWasmVarAddressSpace(SN->getAddressSpace()))
     report_fatal_error(
         "Encountered an unlowerable store to the wasm_var address space",
@@ -2031,6 +2060,31 @@ SDValue WebAssemblyTargetLowering::LowerLoad(SDValue Op,
     EVT LocalVT = LN->getValueType(0);
     return DAG.getNode(WebAssemblyISD::LOCAL_GET, DL, {LocalVT, MVT::Other},
                        {LN->getChain(), Idx});
+  }
+
+  // An externref value cannot live in linear memory, so a load of one through
+  // an ordinary (computed) pointer addresses a slot in the linker-synthesized
+  // __externref_table: the pointer value *is* the table slot index. See the
+  // corresponding comment in LowerStore.
+  if (LN->getValueType(0) == MVT::externref &&
+      !WebAssembly::isWasmVarAddressSpace(LN->getAddressSpace())) {
+    if (!Offset->isUndef())
+      report_fatal_error(
+          "unexpected offset when loading from an externref slot", false);
+
+    MachineFunction &MF = DAG.getMachineFunction();
+    MVT PtrVT = getPointerTy(DAG.getDataLayout());
+    MCSymbolWasm *Table =
+        WebAssembly::getOrCreateExternrefTableSymbol(MF.getContext(), Subtarget);
+    SDValue TableSym = DAG.getMCSymbol(Table, PtrVT);
+    // Table indices are i32 regardless of pointer width.
+    SDValue Idx = Base;
+    if (Base.getValueType() != MVT::i32)
+      Idx = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Base);
+    SDVTList Tys = DAG.getVTList(MVT::externref, MVT::Other);
+    SDValue Ops[] = {LN->getChain(), TableSym, Idx};
+    return DAG.getMemIntrinsicNode(WebAssemblyISD::TABLE_GET, DL, Tys, Ops,
+                                   LN->getMemoryVT(), LN->getMemOperand());
   }
 
   if (WebAssembly::isWasmVarAddressSpace(LN->getAddressSpace()))
