@@ -35,7 +35,6 @@
 #include "Utils/WasmAddressSpaces.h"
 #include "Utils/WebAssemblyTypeUtilities.h"
 #include "WebAssembly.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -66,10 +65,9 @@ class WebAssemblyRefTypeMem2Local final : public FunctionPass {
     return "WebAssembly Reference Types Memory to Local";
   }
 
-  void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.setPreservesCFG();
-    FunctionPass::getAnalysisUsage(AU);
-  }
+  // Note: this pass does not preserve the CFG. When a function unwinds an
+  // unhandled exception to its caller via a catchswitch, the spill epilogue is
+  // injected by rerouting that edge through a new cleanup block.
 
   bool runOnFunction(Function &F) override;
 
@@ -145,34 +143,28 @@ static void promoteToLocal(AllocaInst *AI) {
   AI->eraseFromParent();
 }
 
-static bool containsWebAssemblyExternrefType(
-    Type *Ty, SmallPtrSetImpl<const Type *> &Visited) {
+// LLVM aggregate types can only refer to themselves recursively through a
+// pointer (a leaf type here), so plain structural recursion terminates without
+// needing a visited-set cycle guard.
+static bool containsWebAssemblyExternrefType(Type *Ty) {
   if (WebAssembly::isWebAssemblyExternrefType(Ty))
     return true;
 
-  if (!Visited.insert(Ty).second)
-    return false;
-
   if (auto *AT = dyn_cast<ArrayType>(Ty))
-    return containsWebAssemblyExternrefType(AT->getElementType(), Visited);
+    return containsWebAssemblyExternrefType(AT->getElementType());
 
   if (auto *VT = dyn_cast<VectorType>(Ty))
-    return containsWebAssemblyExternrefType(VT->getElementType(), Visited);
+    return containsWebAssemblyExternrefType(VT->getElementType());
 
   if (auto *ST = dyn_cast<StructType>(Ty)) {
     if (ST->isOpaque())
       return false;
     for (Type *ElemTy : ST->elements())
-      if (containsWebAssemblyExternrefType(ElemTy, Visited))
+      if (containsWebAssemblyExternrefType(ElemTy))
         return true;
   }
 
   return false;
-}
-
-static bool containsWebAssemblyExternrefType(Type *Ty) {
-  SmallPtrSet<const Type *, 4> Visited;
-  return containsWebAssemblyExternrefType(Ty, Visited);
 }
 
 bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
@@ -307,6 +299,7 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
     EpilogueB.CreateCall(TableFill, {Table, FillStart, Null, SlotCount});
   };
 
+  SmallVector<CatchSwitchInst *, 4> CatchSwitchesToCaller;
   for (BasicBlock &BB : F) {
     Instruction *TI = BB.getTerminator();
     if (isa<ReturnInst>(TI) || isa<ResumeInst>(TI)) {
@@ -319,6 +312,44 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
         InsertEpilogue(TI);
       continue;
     }
+
+    // An exception matching none of the catch handlers leaves the function
+    // through the catchswitch's unwind-to-caller edge. A catchswitch is not an
+    // instruction insertion point, so we handle these after the walk.
+    if (auto *CSI = dyn_cast<CatchSwitchInst>(TI))
+      if (CSI->unwindsToCaller())
+        CatchSwitchesToCaller.push_back(CSI);
+  }
+
+  // Reroute every catchswitch's unwind-to-caller edge through one shared
+  // cleanup pad that runs the epilogue and then unwinds to the caller, so the
+  // spill stack is restored on the exception-propagation path too.
+  //
+  // The cleanup pad sits at the top-level scope (within none): EH structural
+  // rules require that all unwind edges leaving a funclet share one
+  // destination, so any catchswitch that unwinds to the caller has all of its
+  // enclosing catchswitches unwinding to the caller as well. A single shared
+  // destination is therefore consistent for both top-level and nested
+  // catchswitches. A catchswitch's unwind destination is fixed at construction
+  // time, so each one must be rebuilt to point at the cleanup.
+  BasicBlock *CleanupBB = nullptr;
+  for (CatchSwitchInst *CSI : CatchSwitchesToCaller) {
+    if (!CleanupBB) {
+      CleanupBB = BasicBlock::Create(Ctx, "externref.cleanup", &F);
+      IRBuilder<> CleanupB(CleanupBB);
+      auto *CPI = CleanupB.CreateCleanupPad(ConstantTokenNone::get(Ctx));
+      auto *CRI = CleanupB.CreateCleanupRet(CPI, /*UnwindBB=*/nullptr);
+      InsertEpilogue(CRI);
+    }
+
+    CatchSwitchInst *NewCSI = CatchSwitchInst::Create(
+        CSI->getParentPad(), CleanupBB, CSI->getNumHandlers(), "",
+        CSI->getIterator());
+    for (BasicBlock *Handler : CSI->handlers())
+      NewCSI->addHandler(Handler);
+    NewCSI->takeName(CSI);
+    CSI->replaceAllUsesWith(NewCSI);
+    CSI->eraseFromParent();
   }
 
   return true;
