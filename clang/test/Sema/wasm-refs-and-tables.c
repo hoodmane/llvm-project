@@ -10,9 +10,9 @@ extern __externref_t r2;
 static __externref_t r3;
 __externref_t r4 __attribute__((wasmtable));       // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}
 
-__externref_t *t1;               // expected-error {{pointer to WebAssembly reference type is not allowed}}
-__externref_t **t2;              // expected-error {{pointer to WebAssembly reference type is not allowed}}
-__externref_t ******t3;          // expected-error {{pointer to WebAssembly reference type is not allowed}}
+__externref_t *t1;
+__externref_t **t2;
+__externref_t ******t3;
 static __externref_t t4[3];      // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 static __externref_t t5[];       // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 static __externref_t t6[] = {0}; // expected-error {{arrays of WebAssembly reference types are not yet supported}}
@@ -47,8 +47,8 @@ struct s {
   __externref_t f2[0];    // expected-error {{arrays of WebAssembly reference types are not yet supported}}
   __externref_t f3[];     // expected-error {{arrays of WebAssembly reference types are not yet supported}}
   __externref_t f4[0][0]; // expected-error {{multi-dimensional arrays of WebAssembly references are not allowed}}
-  __externref_t *f5;      // expected-error {{pointer to WebAssembly reference type is not allowed}}
-  __externref_t ****f6;   // expected-error {{pointer to WebAssembly reference type is not allowed}}
+  __externref_t *f5;
+  __externref_t ****f6;
   __externref_t (*f7)[0]; // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 };
 
@@ -56,8 +56,8 @@ struct t {
   __externref_t f2[0] __attribute__((wasmtable));    // expected-error {{field has sizeless type '__externref_t'}}
   __externref_t f3[] __attribute__((wasmtable));     // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}} expected-error {{field has sizeless type '__externref_t'}}
   __externref_t f4[0][0] __attribute__((wasmtable)); // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}} expected-error {{multi-dimensional arrays of WebAssembly references are not allowed}}
-  __externref_t *f5 __attribute__((wasmtable));      // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}} expected-error {{pointer to WebAssembly reference type is not allowed}}
-  __externref_t ****f6 __attribute__((wasmtable));   // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}} expected-error {{pointer to WebAssembly reference type is not allowed}}
+  __externref_t *f5 __attribute__((wasmtable));      // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}
+  __externref_t ****f6 __attribute__((wasmtable));   // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}
   __externref_t (*f7)[0] __attribute__((wasmtable)); // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}
 };
 
@@ -66,39 +66,47 @@ union u {
   __externref_t f2[0];    // expected-error {{arrays of WebAssembly reference types are not yet supported}}
   __externref_t f3[];     // expected-error {{arrays of WebAssembly reference types are not yet supported}}
   __externref_t f4[0][0]; // expected-error {{multi-dimensional arrays of WebAssembly references are not allowed}}
-  __externref_t *f5;      // expected-error {{pointer to WebAssembly reference type is not allowed}}
-  __externref_t ****f6;   // expected-error {{pointer to WebAssembly reference type is not allowed}}
+  __externref_t *f5;
+  __externref_t ****f6;
   __externref_t (*f7)[0]; // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 };
 
 void illegal_argument_1(__externref_t table[]);     // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 void illegal_argument_2(__externref_t table[0][0]); // expected-error {{multi-dimensional arrays of WebAssembly references are not allowed}}
-void illegal_argument_3(__externref_t *table);      // expected-error {{pointer to WebAssembly reference type is not allowed}}
-void illegal_argument_4(__externref_t ***table);    // expected-error {{pointer to WebAssembly reference type is not allowed}}
+void illegal_argument_3(__externref_t *table);
+void illegal_argument_4(__externref_t ***table);
 void illegal_argument_5(__externref_t (*table)[0]); // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 void illegal_argument_6(__externref_t table[0]);    // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 void illegal_argument_7(__externref_t table[] __attribute__((wasmtable)));     // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}
 
-__externref_t *illegal_return_1();   // expected-error {{pointer to WebAssembly reference type is not allowed}}
-__externref_t ***illegal_return_2(); // expected-error {{pointer to WebAssembly reference type is not allowed}}
+__externref_t *illegal_return_1();
+__externref_t ***illegal_return_2();
 __externref_t (*illegal_return_3())[0]; // expected-error {{arrays of WebAssembly reference types are not yet supported}}
 
 void varargs(int, ...);
 typedef void (*__funcref funcref_t)();
 typedef void (*__funcref __funcref funcref_fail_t)(); // expected-warning {{attribute '__funcref' is already applied}}
 
+// Unlike externref, pointers to and address-of funcrefs remain disallowed.
+funcref_t *fr_ptr1;  // expected-error {{pointer to WebAssembly reference type is not allowed}}
+funcref_t **fr_ptr2; // expected-error {{pointer to WebAssembly reference type is not allowed}}
+
+void funcref_uses(funcref_t fr) {
+  &fr; // expected-error {{cannot take address of WebAssembly reference}}
+}
+
 __externref_t func(__externref_t ref) {
-  &ref;                        // expected-error {{cannot take address of WebAssembly reference}}
+  &ref;
   int foo = 40;
-  (__externref_t *)(&foo);     // expected-error {{pointer to WebAssembly reference type is not allowed}}
-  (__externref_t ****)(&foo);  // expected-error {{pointer to WebAssembly reference type is not allowed}}
+  (__externref_t *)(&foo);
+  (__externref_t ****)(&foo);
   sizeof(ref);                 // expected-error {{invalid application of 'sizeof' to sizeless type '__externref_t'}}
   sizeof(__externref_t);       // expected-error {{invalid application of 'sizeof' to sizeless type '__externref_t'}}
   sizeof(__externref_t[0]);    // expected-error {{arrays of WebAssembly reference types are not yet supported}}
   sizeof(table);               // expected-error {{invalid application of 'sizeof' to WebAssembly table}}
   sizeof(__externref_t[0][0]); // expected-error {{multi-dimensional arrays of WebAssembly references are not allowed}}
-  sizeof(__externref_t *);     // expected-error {{pointer to WebAssembly reference type is not allowed}}
-  sizeof(__externref_t ***);   // expected-error {{pointer to WebAssembly reference type is not allowed}};
+  sizeof(__externref_t *);
+  sizeof(__externref_t ***);
   // expected-warning@+1 {{'_Alignof' applied to an expression is a GNU extension}}
   _Alignof(ref);                 // expected-error {{invalid application of 'alignof' to sizeless type '__externref_t'}}
   _Alignof(__externref_t);       // expected-error {{invalid application of 'alignof' to sizeless type '__externref_t'}}
@@ -106,8 +114,8 @@ __externref_t func(__externref_t ref) {
   _Alignof(__externref_t[0]);    // expected-error {{arrays of WebAssembly reference types are not yet supported}}
   _Alignof(table);               // expected-warning {{'_Alignof' applied to an expression is a GNU extension}} expected-error {{invalid application of 'alignof' to WebAssembly table}}
   _Alignof(__externref_t[0][0]); // expected-error {{multi-dimensional arrays of WebAssembly references are not allowed}}
-  _Alignof(__externref_t *);     // expected-error {{pointer to WebAssembly reference type is not allowed}}
-  _Alignof(__externref_t ***);   // expected-error {{pointer to WebAssembly reference type is not allowed}};
+  _Alignof(__externref_t *);
+  _Alignof(__externref_t ***);
   varargs(1, ref);               // expected-error {{cannot pass expression of type '__externref_t' to variadic function}}
 
   __externref_t lt1[0];           // expected-error {{arrays of WebAssembly reference types are not yet supported}}
