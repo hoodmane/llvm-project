@@ -15,10 +15,23 @@
 # RUN:     -z externref-stack-size=16 -o %t.wasm %t.o
 # RUN: obj2yaml %t.wasm | FileCheck %s
 
-## Without -z externref-stack-size the stack region is empty, so the table
-## minimum size and every boundary is 0.
+## Without an explicit -z externref-stack-size, a program that references
+## __externref_stack_pointer (i.e. the compiler emitted spill code) still needs
+## a real spill stack, so the linker reserves a positive default (1024 slots)
+## rather than an empty region that would trap.  The stack pointer starts at the
+## high end and grows down:
+##   data_end   = 0
+##   stack_low  = 0,  stack_high = 1024,  stack_pointer = 1024
+##   heap_base  = 1024
+## and the table's minimum size is the default 1024 (0x400).
 # RUN: wasm-ld --extra-features=reference-types --no-entry --export=_start \
-# RUN:     -o %t.nostack.wasm %t.o
+# RUN:     -o %t.default.wasm %t.o
+# RUN: obj2yaml %t.default.wasm | FileCheck %s --check-prefix=DEFAULT
+
+## An explicit -z externref-stack-size=0 opts back out of the default and leaves
+## the stack region empty (table minimum size 0).
+# RUN: wasm-ld --extra-features=reference-types --no-entry --export=_start \
+# RUN:     -z externref-stack-size=0 -o %t.nostack.wasm %t.o
 # RUN: obj2yaml %t.nostack.wasm | FileCheck %s --check-prefix=NOSTACK
 
 ## Without the reference-types feature the boundary globals are not provided, so
@@ -108,6 +121,50 @@ _start:
 # CHECK-NEXT:     Name:            __externref_stack_pointer
 # CHECK-NEXT:   - Index:           4
 # CHECK-NEXT:     Name:            __externref_heap_base
+
+# DEFAULT:      - Type:            TABLE
+# DEFAULT-NEXT:   Tables:
+# DEFAULT-NEXT:     - Index:           0
+# DEFAULT-NEXT:       ElemType:        EXTERNREF
+# DEFAULT-NEXT:       Limits:
+# DEFAULT-NEXT:         Minimum:         0x400
+# DEFAULT:        - Type:            GLOBAL
+# DEFAULT-NEXT:     Globals:
+## __externref_data_end = 0
+# DEFAULT-NEXT:       - Index:           0
+# DEFAULT-NEXT:         Type:            I32
+# DEFAULT-NEXT:         Mutable:         false
+# DEFAULT-NEXT:         InitExpr:
+# DEFAULT-NEXT:           Opcode:          I32_CONST
+# DEFAULT-NEXT:           Value:           0
+## __externref_stack_low = 0
+# DEFAULT-NEXT:       - Index:           1
+# DEFAULT-NEXT:         Type:            I32
+# DEFAULT-NEXT:         Mutable:         false
+# DEFAULT-NEXT:         InitExpr:
+# DEFAULT-NEXT:           Opcode:          I32_CONST
+# DEFAULT-NEXT:           Value:           0
+## __externref_stack_high = 1024
+# DEFAULT-NEXT:       - Index:           2
+# DEFAULT-NEXT:         Type:            I32
+# DEFAULT-NEXT:         Mutable:         false
+# DEFAULT-NEXT:         InitExpr:
+# DEFAULT-NEXT:           Opcode:          I32_CONST
+# DEFAULT-NEXT:           Value:           1024
+## __externref_stack_pointer = 1024 (mutable, grows down)
+# DEFAULT-NEXT:       - Index:           3
+# DEFAULT-NEXT:         Type:            I32
+# DEFAULT-NEXT:         Mutable:         true
+# DEFAULT-NEXT:         InitExpr:
+# DEFAULT-NEXT:           Opcode:          I32_CONST
+# DEFAULT-NEXT:           Value:           1024
+## __externref_heap_base = 1024
+# DEFAULT-NEXT:       - Index:           4
+# DEFAULT-NEXT:         Type:            I32
+# DEFAULT-NEXT:         Mutable:         false
+# DEFAULT-NEXT:         InitExpr:
+# DEFAULT-NEXT:           Opcode:          I32_CONST
+# DEFAULT-NEXT:           Value:           1024
 
 # NOSTACK:      - Type:            TABLE
 # NOSTACK-NEXT:   Tables:

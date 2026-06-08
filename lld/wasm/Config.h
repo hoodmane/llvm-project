@@ -111,8 +111,12 @@ struct Config {
   uint64_t externrefTableBase;
   uint64_t zStackSize;
   // Number of slots to reserve in the __externref_table for the externref
-  // spill stack (the table-index-space analog of -z stack-size).
-  uint64_t externrefStackSize;
+  // spill stack (the table-index-space analog of -z stack-size).  This is left
+  // unset when the user does not pass -z externref-stack-size: in that case a
+  // positive default is applied during link, but only when the spill stack is
+  // actually used (i.e. an input references __externref_stack_pointer), so that
+  // reference-types programs that never spill do not pull in an externref table.
+  std::optional<uint64_t> externrefStackSize;
   uint64_t pageSize;
   unsigned ltoPartitions;
   unsigned ltoo;

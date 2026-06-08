@@ -45,6 +45,12 @@ using namespace llvm::wasm;
 namespace lld::wasm {
 Ctx ctx;
 
+// Default number of __externref_table slots reserved for the externref spill
+// stack when the program spills address-taken externrefs but the user did not
+// pass -z externref-stack-size.  The value is a slot count (one externref per
+// slot), not bytes, so it need not mirror the 64KiB linear-memory stack.
+static const uint64_t defaultExternrefStackSize = 1024;
+
 void errorOrWarn(const llvm::Twine &msg) {
   if (ctx.arg.noinhibitExec)
     warn(msg);
@@ -641,8 +647,15 @@ static void readConfigs(opt::InputArgList &args) {
   ctx.arg.noGrowableMemory = args.hasArg(OPT_no_growable_memory);
   ctx.arg.zStackSize =
       args::getZOptionValue(args, OPT_z, "stack-size", WasmDefaultPageSize);
-  ctx.arg.externrefStackSize =
-      args::getZOptionValue(args, OPT_z, "externref-stack-size", 0);
+  // Only record an externref spill stack size when the user passes
+  // -z externref-stack-size explicitly; otherwise leave it unset so that a
+  // positive default can be applied later, but only when the spill stack is
+  // actually used (see the externref table resolution in link()).  The sentinel
+  // default of -1 (UINT64_MAX) marks "not set".
+  uint64_t externrefStackSize =
+      args::getZOptionValue(args, OPT_z, "externref-stack-size", uint64_t(-1));
+  if (externrefStackSize != uint64_t(-1))
+    ctx.arg.externrefStackSize = externrefStackSize;
   ctx.arg.pageSize = args::getInteger(args, OPT_page_size, WasmDefaultPageSize);
   if (ctx.arg.pageSize != 1 && ctx.arg.pageSize != WasmDefaultPageSize)
     error("--page_size=N must be either 1 or 65536");
@@ -1615,7 +1628,7 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   // stack region are gated on referenceTypesEnabled() in createOptionalSymbols.
   // Reject an explicit -z externref-stack-size in that case rather than
   // silently emitting an externref table without the corresponding feature.
-  if (ctx.arg.externrefStackSize != 0 && !referenceTypesEnabled())
+  if (ctx.arg.externrefStackSize.value_or(0) != 0 && !referenceTypesEnabled())
     error("-z externref-stack-size requires the reference-types feature");
 
   // Provide the default externref table if needed.  In addition to the
@@ -1626,8 +1639,19 @@ void LinkerDriver::linkerMain(ArrayRef<const char *> argsArr) {
   // rather than isLive so that --export-all (which force-defines the optional
   // boundary globals) does not by itself pull in an externref table.
   auto isReferenced = [](Symbol *s) { return s && s->isUsedInRegularObj; };
+
+  // The compiler emits spill prologues/epilogues that reference
+  // __externref_stack_pointer whenever it spills an address-taken externref.
+  // When that happens but the user did not size the spill stack, reserve a
+  // positive default so the spills land in real slots instead of trapping on an
+  // empty (size-0) table.  Programs that never spill do not reference the stack
+  // pointer and so stay free of an externref table.
+  if (referenceTypesEnabled() && !ctx.arg.externrefStackSize.has_value() &&
+      isReferenced(ctx.sym.externrefStackPointer))
+    ctx.arg.externrefStackSize = defaultExternrefStackSize;
+
   bool externrefTableRequired =
-      (ctx.arg.externrefStackSize != 0 && referenceTypesEnabled()) ||
+      (ctx.arg.externrefStackSize.value_or(0) != 0 && referenceTypesEnabled()) ||
       isReferenced(ctx.sym.externrefDataEnd) ||
       isReferenced(ctx.sym.externrefStackLow) ||
       isReferenced(ctx.sym.externrefStackHigh) ||

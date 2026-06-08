@@ -1019,7 +1019,7 @@ static void finalizeExternrefTable() {
   // Externref spill stack.  Mirroring the linear-memory __stack_pointer, the
   // pointer starts at the high end of the region and grows downward.
   setIndex(ctx.sym.externrefStackLow, index);
-  index += ctx.arg.externrefStackSize;
+  index += ctx.arg.externrefStackSize.value_or(0);
   setIndex(ctx.sym.externrefStackHigh, index);
   setIndex(ctx.sym.externrefStackPointer, index);
 
