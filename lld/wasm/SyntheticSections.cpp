@@ -82,6 +82,13 @@ void DylinkSection::writeBody() {
     sub.writeTo(os);
   }
 
+  if (externrefTableSize || externrefTableAlign) {
+    SubSection sub(WASM_DYLINK_MEM_INFO_EXTERNREFS);
+    writeUleb128(sub.os, externrefTableSize, "ExternrefTableSize");
+    writeUleb128(sub.os, externrefTableAlign, "ExternrefTableAlign");
+    sub.writeTo(os);
+  }
+
   if (ctx.sharedFiles.size()) {
     SubSection sub(WASM_DYLINK_NEEDED);
     writeUleb128(sub.os, ctx.sharedFiles.size(), "Needed");
