@@ -347,10 +347,15 @@ public:
   ExternrefElemSection() : SyntheticSection(llvm::wasm::WASM_SEC_ELEM) {}
   bool isNeeded() const override { return false; }
   void addEntry(DataSymbol *sym);
-  uint32_t numEntries() const { return externrefSlots.size(); }
+  // The number of table slots occupied by the assigned symbols.  A global
+  // externref *array* (`__externref_t c[N];`) is a single symbol that occupies
+  // N contiguous slots, so this is the sum of the symbols' element counts, not
+  // the number of symbols.
+  uint32_t numEntries() const { return numSlots; }
 
 protected:
   std::vector<const DataSymbol *> externrefSlots;
+  uint32_t numSlots = 0;
 };
 
 class DataCountSection : public SyntheticSection {
