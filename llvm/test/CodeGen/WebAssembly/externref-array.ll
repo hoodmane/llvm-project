@@ -105,9 +105,16 @@ define %externref @get_other(i32 %i) {
 @e = hidden global [3 x [4 x %externref]] zeroinitializer, align 1
 
 define %externref @get_2d(i32 %i, i32 %j) {
+; The element offset is the flattened index i*4 + j (the i*4 as a shl by 2),
+; added to the array's base slot. The checks match the common op sequence on
+; both wasm32 and wasm64 (wasm64 interleaves i64 extend/wrap around the add).
 ; CHECK-LABEL: get_2d:
 ; CHECK-NEXT:  .functype       get_2d (i32, i32) -> (externref)
 ; CHECK:       i32.const       e@EXTERNREF_TABLE_INDEX
+; CHECK:       local.get       0
+; CHECK:       i32.const       2
+; CHECK:       i32.shl
+; CHECK:       local.get       1
 ; CHECK:       table.get       __externref_table
 ; CHECK-NEXT:  end_function
   %p = getelementptr inbounds [4 x %externref], ptr @e, i32 %i, i32 %j
