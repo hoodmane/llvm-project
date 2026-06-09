@@ -698,7 +698,18 @@ void ExternrefElemSection::addEntry(DataSymbol *sym) {
   // The reserved slot plus the allocated slots form the table's bss region;
   // Writer::finalizeExternrefTable places the spill stack and heap regions after
   // them.
-  sym->setExternrefTableIndex(ctx.arg.externrefTableBase + externrefSlots.size());
+  //
+  // A symbol may be an externref *array* (`__externref_t c[N];`), in which case
+  // it occupies N contiguous slots: element `c[i]` is accessed as
+  // `<slot of c> + i` (the per-element offset is materialized at runtime, not
+  // folded into the relocation).  Reserve one slot per element so the whole
+  // array fits; the element size is one slot, so a defined symbol's size gives
+  // the element count directly.
+  sym->setExternrefTableIndex(ctx.arg.externrefTableBase + numSlots);
+  uint64_t slots = 1;
+  if (auto *d = dyn_cast<DefinedData>(sym))
+    slots = std::max<uint64_t>(1, d->getSize());
+  numSlots += slots;
   externrefSlots.emplace_back(sym);
 }
 

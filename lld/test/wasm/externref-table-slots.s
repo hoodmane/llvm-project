@@ -3,9 +3,11 @@
 ## R_WASM_EXTERNREF_TABLE_INDEX_LEB relocations request a slot in the
 ## linker-synthesized __externref_table for the referenced data symbol.  Slot 0
 ## is reserved as the canonical null externref, and the linker allocates one
-## slot per distinct symbol after it (the table's bss region), resolving each
-## relocation to that slot's index.  Here g0 is referenced twice and g1 once, so
-## two slots are allocated after the reserved null slot: g0 -> 1, g1 -> 2.
+## slot per externref element after it (the table's bss region), resolving each
+## relocation to that slot's index.  g0 and g1 are scalar externrefs (one slot
+## each); g0 is referenced twice and g1 once, so two slots are allocated after
+## the reserved null slot: g0 -> 1, g1 -> 2.  (Externref arrays occupy multiple
+## contiguous slots; see externref-table-array.s.)
 # RUN: wasm-ld --extra-features=reference-types --no-entry --export=_start \
 # RUN:     -o %t.wasm %t.o
 # RUN: obj2yaml %t.wasm | FileCheck %s
@@ -73,13 +75,14 @@ _start:
 .reloc _start+9,  R_WASM_EXTERNREF_TABLE_INDEX_LEB, g0
 .reloc _start+16, R_WASM_EXTERNREF_TABLE_INDEX_LEB, g1
 
+## A scalar externref occupies a single table slot, so each symbol has size 1.
   .section .data,"",@
 g0:
-  .int32 0
-.size g0, 4
+  .int8 0
+.size g0, 1
 g1:
-  .int32 0
-.size g1, 4
+  .int8 0
+.size g1, 1
 
 ## A defined externref table is synthesized with minimum size B = N + 1 = 3 (the
 ## reserved null slot plus two symbol slots, no stack).
