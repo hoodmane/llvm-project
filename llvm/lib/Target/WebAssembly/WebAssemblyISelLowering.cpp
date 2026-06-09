@@ -1841,17 +1841,63 @@ static std::optional<unsigned> IsWebAssemblyLocal(SDValue Op,
 }
 
 // A global variable whose value type is a WebAssembly reference type cannot
-// live in linear memory. Instead it names a slot in the linker-synthesized
-// __externref_table, accessed via table.get/table.set. Such a global is an
-// ordinary (data) GlobalAddress (not in the wasm-var address space, which is
-// reserved for real wasm globals) whose loaded/stored value is a reference
-// type.
-static const GlobalAddressSDNode *IsExternrefTableSlot(SDValue Base, EVT VT) {
+// live in linear memory. Instead it (or, for an array, each of its elements)
+// names a slot in the linker-synthesized __externref_table, accessed via
+// table.get/table.set. Such a global is an ordinary (data) GlobalAddress (not
+// in the wasm-var address space, which is reserved for real wasm globals) whose
+// loaded/stored value is a reference type.
+//
+// For an array global `__externref_t c[N]` the IR type is
+// `[N x ptr addrspace(10)]`, and an element pointer (addrspace 10/20) is one
+// byte wide (`p10:8:8` / `p20:8:8` in the data layout), so the byte offset into
+// the array equals the slot offset within the array's region of the table.
+// Element access `c[i]` therefore reaches LowerLoad/LowerStore as one of:
+//   - `GlobalAddress<c> + K`        (constant index K), or
+//   - `add(index, GlobalAddress<c>)` (dynamic index, either operand order),
+// possibly with a constant index folded into the GlobalAddress offset.
+//
+// On success returns the GlobalAddressSDNode naming the externref symbol and
+// sets `EltOffset` to the i32 per-element offset (in slots) to add to the
+// symbol's base slot, or a null SDValue for the whole-symbol case (a scalar
+// global or `c[0]`), which keeps the scalar lowering unchanged.
+static const GlobalAddressSDNode *IsExternrefTableSlot(SDValue Base, EVT VT,
+                                                       SDValue &EltOffset,
+                                                       SelectionDAG &DAG,
+                                                       const SDLoc &DL) {
   if (VT != MVT::externref)
     return nullptr;
+
+  // Peel off a dynamic element index: `add(index, GlobalAddress)` in either
+  // operand order. The non-global operand is the element offset.
+  SDValue DynIndex;
+  if (Base.getOpcode() == ISD::ADD) {
+    SDValue Op0 = Base.getOperand(0);
+    SDValue Op1 = Base.getOperand(1);
+    if (isa<GlobalAddressSDNode>(Op1)) {
+      DynIndex = Op0;
+      Base = Op1;
+    } else if (isa<GlobalAddressSDNode>(Op0)) {
+      DynIndex = Op1;
+      Base = Op0;
+    }
+  }
+
   const auto *GA = dyn_cast<GlobalAddressSDNode>(Base);
   if (!GA || WebAssembly::isWasmVarAddressSpace(GA->getAddressSpace()))
     return nullptr;
+
+  // The slot index is an i32 regardless of pointer width, so compute the
+  // element offset at i32 width: a slot offset that is in range of the table
+  // fits in i32, and (base + off) mod 2^32 == baseSlot + (off mod 2^32).
+  EltOffset = DynIndex;
+  if (EltOffset && EltOffset.getValueType() != MVT::i32)
+    EltOffset = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, EltOffset);
+
+  // Fold a constant array index carried in the GlobalAddress offset.
+  if (int64_t Off = GA->getOffset()) {
+    SDValue C = DAG.getConstant(Off, DL, MVT::i32);
+    EltOffset = EltOffset ? DAG.getNode(ISD::ADD, DL, MVT::i32, EltOffset, C) : C;
+  }
   return GA;
 }
 
@@ -1881,13 +1927,10 @@ static const GlobalAddressSDNode *IsExternrefTableSlot(SDValue Base, EVT VT) {
 // wasm64), so the result is truncated to the i32 table index.
 static SDValue getExternrefTableSlotIndex(const GlobalAddressSDNode *GA,
                                           const SDLoc &DL, SelectionDAG &DAG) {
-  // The slot index names a whole table entry; a byte offset into it is
-  // meaningless. Reject it here so a release build diagnoses the bad input
-  // instead of silently dropping the offset and referencing the wrong slot.
-  if (GA->getOffset() != 0)
-    report_fatal_error(
-        "unexpected offset on a global externref table slot symbol", false);
-
+  // This materializes the base slot of the whole symbol; any constant or
+  // dynamic array-element offset is added by the caller (see
+  // IsExternrefTableSlot), so the symbol reference itself always has a zero
+  // offset here.
   const GlobalValue *GV = GA->getGlobal();
 
   if (DAG.getTarget().isPositionIndependent()) {
@@ -1949,8 +1992,9 @@ SDValue WebAssemblyTargetLowering::LowerStore(SDValue Op,
                                    SN->getMemoryVT(), SN->getMemOperand());
   }
 
+  SDValue EltOffset;
   if (const GlobalAddressSDNode *GA =
-          IsExternrefTableSlot(Base, Value.getValueType())) {
+          IsExternrefTableSlot(Base, Value.getValueType(), EltOffset, DAG, DL)) {
     if (!Offset->isUndef())
       report_fatal_error(
           "unexpected offset when storing to a global externref", false);
@@ -1961,6 +2005,8 @@ SDValue WebAssemblyTargetLowering::LowerStore(SDValue Op,
         WebAssembly::getOrCreateExternrefTableSymbol(MF.getContext(), Subtarget);
     SDValue TableSym = DAG.getMCSymbol(Table, PtrVT);
     SDValue Idx = getExternrefTableSlotIndex(GA, DL, DAG);
+    if (EltOffset)
+      Idx = DAG.getNode(ISD::ADD, DL, MVT::i32, Idx, EltOffset);
     SDVTList Tys = DAG.getVTList(MVT::Other);
     SDValue Ops[] = {SN->getChain(), TableSym, Idx, Value};
     return DAG.getMemIntrinsicNode(WebAssemblyISD::TABLE_SET, DL, Tys, Ops,
@@ -2033,8 +2079,9 @@ SDValue WebAssemblyTargetLowering::LowerLoad(SDValue Op,
                                    LN->getMemoryVT(), LN->getMemOperand());
   }
 
+  SDValue EltOffset;
   if (const GlobalAddressSDNode *GA =
-          IsExternrefTableSlot(Base, LN->getValueType(0))) {
+          IsExternrefTableSlot(Base, LN->getValueType(0), EltOffset, DAG, DL)) {
     if (!Offset->isUndef())
       report_fatal_error(
           "unexpected offset when loading from a global externref", false);
@@ -2045,6 +2092,8 @@ SDValue WebAssemblyTargetLowering::LowerLoad(SDValue Op,
         WebAssembly::getOrCreateExternrefTableSymbol(MF.getContext(), Subtarget);
     SDValue TableSym = DAG.getMCSymbol(Table, PtrVT);
     SDValue Idx = getExternrefTableSlotIndex(GA, DL, DAG);
+    if (EltOffset)
+      Idx = DAG.getNode(ISD::ADD, DL, MVT::i32, Idx, EltOffset);
     SDVTList Tys = DAG.getVTList(MVT::externref, MVT::Other);
     SDValue Ops[] = {LN->getChain(), TableSym, Idx};
     return DAG.getMemIntrinsicNode(WebAssemblyISD::TABLE_GET, DL, Tys, Ops,
