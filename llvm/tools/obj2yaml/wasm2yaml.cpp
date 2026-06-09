@@ -61,6 +61,8 @@ WasmDumper::dumpCustomSection(const WasmSection &WasmSec) {
     DylinkSec->MemoryAlignment = Info.MemoryAlignment;
     DylinkSec->TableSize = Info.TableSize;
     DylinkSec->TableAlignment = Info.TableAlignment;
+    DylinkSec->ExternrefTableSize = Info.ExternrefTableSize;
+    DylinkSec->ExternrefTableAlignment = Info.ExternrefTableAlignment;
     DylinkSec->Needed = Info.Needed;
     DylinkSec->RuntimePath = Info.RuntimePath;
     for (const auto &Imp : Info.ImportInfo)

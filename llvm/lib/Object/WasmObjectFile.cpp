@@ -480,6 +480,10 @@ Error WasmObjectFile::parseDylink0Section(ReadContext &Ctx) {
       DylinkInfo.TableSize = readVaruint32(Ctx);
       DylinkInfo.TableAlignment = readVaruint32(Ctx);
       break;
+    case wasm::WASM_DYLINK_MEM_INFO_EXTERNREFS:
+      DylinkInfo.ExternrefTableSize = readVaruint32(Ctx);
+      DylinkInfo.ExternrefTableAlignment = readVaruint32(Ctx);
+      break;
     case wasm::WASM_DYLINK_NEEDED:
       Count = readVaruint32(Ctx);
       while (Count--) {

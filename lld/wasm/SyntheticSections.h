@@ -79,6 +79,8 @@ public:
 
   uint32_t memAlign = 0;
   uint32_t memSize = 0;
+  uint32_t externrefTableSize = 0;
+  uint32_t externrefTableAlign = 0;
 };
 
 class TypeSection : public SyntheticSection {

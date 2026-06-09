@@ -228,6 +228,8 @@ struct DylinkSection : CustomSection {
   uint32_t MemoryAlignment;
   uint32_t TableSize;
   uint32_t TableAlignment;
+  uint32_t ExternrefTableSize = 0;
+  uint32_t ExternrefTableAlignment = 0;
   std::vector<StringRef> Needed;
   std::vector<DylinkImportInfo> ImportInfo;
   std::vector<DylinkExportInfo> ExportInfo;

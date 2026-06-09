@@ -171,6 +171,14 @@ void WasmWriter::writeSectionContent(raw_ostream &OS,
   encodeULEB128(Section.TableAlignment, SubOS);
   SubSection.done();
 
+  if (Section.ExternrefTableSize || Section.ExternrefTableAlignment) {
+    writeUint8(OS, wasm::WASM_DYLINK_MEM_INFO_EXTERNREFS);
+    raw_ostream &SubOS = SubSection.getStream();
+    encodeULEB128(Section.ExternrefTableSize, SubOS);
+    encodeULEB128(Section.ExternrefTableAlignment, SubOS);
+    SubSection.done();
+  }
+
   if (Section.Needed.size()) {
     writeUint8(OS, wasm::WASM_DYLINK_NEEDED);
     raw_ostream &SubOS = SubSection.getStream();

@@ -214,6 +214,7 @@ enum : unsigned {
   WASM_DYLINK_EXPORT_INFO = 0x3,
   WASM_DYLINK_IMPORT_INFO = 0x4,
   WASM_DYLINK_RUNTIME_PATH = 0x5,
+  WASM_DYLINK_MEM_INFO_EXTERNREFS = 0x6,
 };
 
 // Kind codes used in the custom "linking" section in the WASM_COMDAT_INFO
@@ -305,6 +306,8 @@ struct WasmDylinkInfo {
   uint32_t MemoryAlignment;  // P2 alignment of memory
   uint32_t TableSize;  // Table size in elements
   uint32_t TableAlignment;  // P2 alignment of table
+  uint32_t ExternrefTableSize = 0;      // Externref table size in elements
+  uint32_t ExternrefTableAlignment = 0; // P2 alignment of externref table
   std::vector<StringRef> Needed; // Shared library dependencies
   std::vector<WasmDylinkImportInfo> ImportInfo;
   std::vector<WasmDylinkExportInfo> ExportInfo;
