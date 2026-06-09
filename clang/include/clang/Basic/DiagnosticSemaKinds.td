@@ -13840,8 +13840,11 @@ def err_wasm_table_pr : Error<
 def err_wasm_table_attr_invalid_type : Error<
   "'wasmtable' attribute only applies to a zero-length array of WebAssembly "
   "reference types">;
-def err_wasm_reftype_array : Error<
-  "arrays of WebAssembly reference types are not yet supported">;
+def err_wasm_reftype_array_in_struct : Error<
+  "arrays of WebAssembly reference types are not allowed in a "
+  "%select{struct|union}0">;
+def err_wasm_funcref_array : Error<
+  "arrays of WebAssembly funcref types are not allowed">;
 def err_wasm_table_in_function : Error<
   "WebAssembly table cannot be declared within a function">;
 def err_wasm_table_as_function_parameter : Error<
@@ -13860,8 +13863,6 @@ def err_wasm_reftype_exception_spec : Error<
   "WebAssembly reference type not allowed in exception specification">;
 def err_wasm_table_must_be_static : Error<
   "WebAssembly table must be static">;
-def err_wasm_reftype_multidimensional_array : Error<
-  "multi-dimensional arrays of WebAssembly references are not allowed">;
 def err_wasm_builtin_arg_must_be_table_type : Error <
   "%ordinal0 argument must be a WebAssembly table">;
 def err_wasm_builtin_arg_must_be_externref_type : Error <

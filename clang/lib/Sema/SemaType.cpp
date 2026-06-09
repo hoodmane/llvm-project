@@ -2134,15 +2134,6 @@ QualType Sema::BuildArrayType(QualType T, ArraySizeModifier ASM,
       return QualType();
   }
 
-  // Multi-dimensional arrays of WebAssembly references are not allowed.
-  if (Context.getTargetInfo().getTriple().isWasm() && T->isArrayType()) {
-    const auto *ATy = dyn_cast<ArrayType>(T);
-    if (ATy && ATy->getElementType().isWebAssemblyReferenceType()) {
-      Diag(Loc, diag::err_wasm_reftype_multidimensional_array);
-      return QualType();
-    }
-  }
-
   if (T->isSizelessType() && !T.isWebAssemblyReferenceType()) {
     Diag(Loc, diag::err_array_incomplete_or_sizeless_type) << 1 << T;
     return QualType();
@@ -4333,26 +4324,27 @@ static bool shouldHaveNullability(QualType T) {
 }
 
 /// Returns true if \p QT is, or structurally contains (through pointers,
-/// arrays, or function types), an array whose element is a WebAssembly
-/// reference type. Such arrays are only valid as WebAssembly tables (spelled
-/// with the 'wasmtable' attribute and represented by WebAssemblyTableType);
-/// any other occurrence is not yet supported.
-static bool containsWebAssemblyReferenceArray(ASTContext &Ctx, QualType QT) {
+/// arrays, or function types), an array whose element is a WebAssembly funcref
+/// type. Such arrays are only valid as WebAssembly tables (spelled with the
+/// 'wasmtable' attribute and represented by WebAssemblyTableType); any other
+/// occurrence is not allowed. (Arrays of externref, in contrast, are allowed
+/// outside of struct/union members.)
+static bool containsWebAssemblyFuncrefArray(ASTContext &Ctx, QualType QT) {
   if (const auto *ATy = Ctx.getAsArrayType(QT)) {
-    if (ATy->getElementType().isWebAssemblyReferenceType())
+    if (ATy->getElementType().isWebAssemblyFuncrefType())
       return true;
-    return containsWebAssemblyReferenceArray(Ctx, ATy->getElementType());
+    return containsWebAssemblyFuncrefArray(Ctx, ATy->getElementType());
   }
   if (const auto *PTy = QT->getAs<PointerType>())
-    return containsWebAssemblyReferenceArray(Ctx, PTy->getPointeeType());
+    return containsWebAssemblyFuncrefArray(Ctx, PTy->getPointeeType());
   if (const auto *BPTy = QT->getAs<BlockPointerType>())
-    return containsWebAssemblyReferenceArray(Ctx, BPTy->getPointeeType());
+    return containsWebAssemblyFuncrefArray(Ctx, BPTy->getPointeeType());
   if (const auto *FTy = QT->getAs<FunctionType>()) {
-    if (containsWebAssemblyReferenceArray(Ctx, FTy->getReturnType()))
+    if (containsWebAssemblyFuncrefArray(Ctx, FTy->getReturnType()))
       return true;
     if (const auto *FPTy = dyn_cast<FunctionProtoType>(FTy))
       for (QualType ParamTy : FPTy->getParamTypes())
-        if (containsWebAssemblyReferenceArray(Ctx, ParamTy))
+        if (containsWebAssemblyFuncrefArray(Ctx, ParamTy))
           return true;
   }
   return false;
@@ -5687,17 +5679,17 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
   processTypeAttrs(state, T, TAL_DeclName, NonSlidingAttrs);
   processTypeAttrs(state, T, TAL_DeclName, D.getAttributes());
 
-  // An array of a WebAssembly reference type is only valid as a WebAssembly
+  // An array of a WebAssembly funcref type is only valid as a WebAssembly
   // table, which is spelled with the 'wasmtable' attribute and is represented
   // by a WebAssemblyTableType (produced above by processTypeAttrs). Any
-  // remaining array of a reference type (possibly nested behind pointers or
-  // function types) is not yet supported. Multi-dimensional reference arrays
-  // are diagnosed in BuildArrayType. If a 'wasmtable' attribute is present but
-  // the array didn't become a table, HandleWebAssemblyTableAttr already
-  // diagnosed it, so don't emit a second error here. The attribute may appear
-  // on the declarator, in the declaration-specifiers, or as a leading
-  // declaration attribute; check all three so the redundant error is suppressed
-  // regardless of placement.
+  // remaining array of a funcref type (possibly nested behind pointers or
+  // function types, and including multi-dimensional arrays) is not allowed.
+  // Arrays of externref, in contrast, are permitted outside of struct/union
+  // members. If a 'wasmtable' attribute is present but the array didn't become
+  // a table, HandleWebAssemblyTableAttr already diagnosed it, so don't emit a
+  // second error here. The attribute may appear on the declarator, in the
+  // declaration-specifiers, or as a leading declaration attribute; check all
+  // three so the redundant error is suppressed regardless of placement.
   bool HasWasmTableAttr =
       D.getAttributes().hasAttribute(ParsedAttr::AT_WebAssemblyTable) ||
       D.getDeclarationAttributes().hasAttribute(
@@ -5705,8 +5697,8 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
       D.getDeclSpec().getAttributes().hasAttribute(
           ParsedAttr::AT_WebAssemblyTable);
   if (S.Context.getTargetInfo().getTriple().isWasm() && !HasWasmTableAttr &&
-      containsWebAssemblyReferenceArray(S.Context, T)) {
-    S.Diag(D.getBeginLoc(), diag::err_wasm_reftype_array);
+      containsWebAssemblyFuncrefArray(S.Context, T)) {
+    S.Diag(D.getBeginLoc(), diag::err_wasm_funcref_array);
     T = S.Context.IntTy;
     D.setInvalidType(true);
     AreDeclaratorChunksValid = false;
