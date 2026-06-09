@@ -32,6 +32,14 @@ define %externref @get_external() {
   ret %externref %v
 }
 
+; The dylink section reports the number of statically-allocated global externref
+; slots (just @local; @external is preemptible and resolved via the GOT) via the
+; WASM_DYLINK_MEM_INFO_EXTERNREFS subsection, so the dynamic linker can reserve
+; space in the externref table and set __externref_table_base accordingly.
+; CHECK:      - Type:            CUSTOM
+; CHECK-NEXT:    Name:            dylink.0
+; CHECK:         ExternrefTableSize: 1
+
 ; The externref table is imported (shared) under PIC, as is __externref_table_base
 ; (needed by the defined-symbol path) and GOT.externref.external (the preemptible
 ; symbol's slot index, resolved by the dynamic linker).

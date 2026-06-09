@@ -1016,6 +1016,13 @@ static void finalizeExternrefTable() {
   uint64_t index = numSlots ? ctx.arg.externrefTableBase + numSlots : 0;
   setIndex(ctx.sym.externrefDataEnd, index);
 
+  // Report the statically-allocated global externref slots to the dynamic
+  // linker so it can reserve space in the externref table and set
+  // __externref_table_base accordingly.  This mirrors MemorySize, which covers
+  // only the module's static data and excludes the (loader-managed) stack.
+  if (ctx.isPic)
+    out.dylinkSec->externrefTableSize = numSlots;
+
   // Externref spill stack.  Mirroring the linear-memory __stack_pointer, the
   // pointer starts at the high end of the region and grows downward.
   setIndex(ctx.sym.externrefStackLow, index);
