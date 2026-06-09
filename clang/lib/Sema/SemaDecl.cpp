@@ -19394,11 +19394,26 @@ FieldDecl *Sema::CheckFieldDecl(DeclarationName Name, QualType T,
   }
 
   QualType EltTy = Context.getBaseElementType(T);
+
+  // On WebAssembly, an array whose element type is a reference type cannot be a
+  // struct or union member (a pointer to such an array is fine). Arrays of
+  // reference types are otherwise allowed (e.g. as globals, locals, or function
+  // parameters). A plain reference-type member is diagnosed below as a sizeless
+  // type.
+  bool IsWasmRefArray = Context.getTargetInfo().getTriple().isWasm() &&
+                        T->isArrayType() &&
+                        EltTy.isWebAssemblyReferenceType();
+  if (IsWasmRefArray) {
+    Diag(Loc, diag::err_wasm_reftype_array_in_struct) << Record->isUnion();
+    Record->setInvalidDecl();
+    InvalidDecl = true;
+  }
+
   // A WebAssembly table cannot be a struct or union member. Diagnose it via its
   // (sizeless) reference element type.
   if (const auto *WTT = EltTy->getAs<WebAssemblyTableType>())
     EltTy = WTT->getElementType();
-  if (!EltTy->isDependentType() && !EltTy->containsErrors()) {
+  if (!IsWasmRefArray && !EltTy->isDependentType() && !EltTy->containsErrors()) {
     bool isIncomplete =
         LangOpts.HLSL // HLSL allows sizeless builtin types
             ? RequireCompleteType(Loc, EltTy, diag::err_incomplete_type)

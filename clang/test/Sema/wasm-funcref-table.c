@@ -8,8 +8,12 @@ static fn_funcref valid_table[0] __attribute__((wasmtable)); // no error expecte
 // Invalid: non-zero length
 static fn_funcref bad_table[1] __attribute__((wasmtable)); // expected-error {{'wasmtable' attribute only applies to a zero-length array of WebAssembly reference types}}
 
-// Without the 'wasmtable' attribute, an array of a reference type is not a table.
-static fn_funcref not_a_table[0]; // expected-error {{arrays of WebAssembly reference types are not yet supported}}
+// Without the 'wasmtable' attribute, an array of funcref is not a table, and
+// (unlike arrays of externref) arrays of funcref are not allowed at all.
+static fn_funcref not_a_table[0];   // expected-error {{arrays of WebAssembly funcref types are not allowed}}
+static fn_funcref not_a_table2[3];  // expected-error {{arrays of WebAssembly funcref types are not allowed}}
+static fn_funcref not_a_table3[2][2]; // expected-error {{arrays of WebAssembly funcref types are not allowed}}
+static fn_funcref (*ptr_to_array)[0]; // expected-error {{arrays of WebAssembly funcref types are not allowed}}
 
 // Array subscript on funcref table should be rejected
 void test_subscript(void) {
