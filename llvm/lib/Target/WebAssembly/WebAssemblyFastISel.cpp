@@ -211,6 +211,26 @@ public:
 #include "WebAssemblyGenFastISel.inc"
 };
 
+// A data global whose value type is a WebAssembly reference type - or an array
+// of reference type - cannot live in linear memory; its element(s) are
+// allocated as slots in the linker-synthesized __externref_table, so its
+// address is a slot index requiring the table-slot lowering in
+// WebAssemblyTargetLowering. (This is not a WebAssembly table: real tables live
+// in the wasm-var address space and are excluded below.) FastISel must not
+// materialize a (wrong) linear-memory address for such a global; defer it to
+// SelectionDAG.
+static bool isWasmTableSlotGlobal(const GlobalValue *GV) {
+  // Globals in the wasm-var address space are real WebAssembly tables/globals
+  // referenced directly by table.* / global.* instructions, not externref-table
+  // slot symbols, so they are not handled here.
+  if (WebAssembly::isWasmVarAddressSpace(GV->getAddressSpace()))
+    return false;
+  Type *Ty = GV->getValueType();
+  return WebAssembly::isWebAssemblyReferenceType(Ty) ||
+         (Ty->isArrayTy() &&
+          WebAssembly::isWebAssemblyReferenceType(Ty->getArrayElementType()));
+}
+
 } // end anonymous namespace
 
 bool WebAssemblyFastISel::computeAddress(const Value *Obj, Address &Addr) {
@@ -241,6 +261,9 @@ bool WebAssemblyFastISel::computeAddress(const Value *Obj, Address &Addr) {
     if (Addr.getGlobalValue())
       return false;
     if (GV->isThreadLocal())
+      return false;
+    // Reference-typed / externref-table globals need the table-slot lowering.
+    if (isWasmTableSlotGlobal(GV))
       return false;
     Addr.setGlobalValue(GV);
     return true;
@@ -695,11 +718,10 @@ Register WebAssemblyFastISel::fastMaterializeConstant(const Constant *C) {
       return Register();
     if (GV->isThreadLocal())
       return Register();
-    // A global whose value type is a WebAssembly reference type does not live
-    // in linear memory; its address is its __externref_table slot index, which
-    // requires the table-slot lowering in WebAssemblyTargetLowering. Defer to
-    // SelectionDAG rather than materialize a (wrong) linear-memory address.
-    if (WebAssembly::isWebAssemblyReferenceType(GV->getValueType()))
+    // A reference-typed / externref-table global's address is a table slot
+    // index; defer to SelectionDAG rather than materialize a (wrong)
+    // linear-memory address (see isWasmTableSlotGlobal).
+    if (isWasmTableSlotGlobal(GV))
       return Register();
     Register ResultReg =
         createResultReg(Subtarget->hasAddr64() ? &WebAssembly::I64RegClass

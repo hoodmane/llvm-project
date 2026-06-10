@@ -2352,18 +2352,28 @@ SDValue WebAssemblyTargetLowering::LowerGlobalAddress(SDValue Op,
   unsigned OperandFlags = 0;
   const GlobalValue *GV = GA->getGlobal();
 
-  // A global variable whose value type is a WebAssembly externref type does not
-  // live in linear memory; it names a slot in the linker-synthesized
-  // __externref_table (see IsExternrefTableSlot / emitGlobalVariable). Taking
-  // its address therefore yields its table slot index, consistent with how
-  // loads/stores of the global lower to table.get/table.set on that slot and
-  // with the convention that a pointer to an externref holds a table slot
-  // index. getExternrefTableSlotIndex handles both the static and PIC cases.
-  if (WebAssembly::isWebAssemblyExternrefType(GV->getValueType())) {
+  // A data global whose value type is externref - or an array of externref -
+  // cannot live in linear memory; its element(s) are allocated as slots in the
+  // linker-synthesized __externref_table (see IsExternrefTableSlot /
+  // emitGlobalVariable). Note this is *not* a WebAssembly table: real tables
+  // are the wasm-var-address-space globals fed directly to table.* instructions
+  // (and, at the source level, require the wasmtable attribute), which are
+  // excluded here. Taking the address of such a data global (or an array
+  // element) therefore yields the corresponding __externref_table slot index,
+  // consistent with how loads/stores of the global lower to table.get/table.set
+  // on that slot and with the convention that a pointer to an externref holds a
+  // table slot index. getExternrefTableSlotIndex handles the static and PIC
+  // cases.
+  Type *ValTy = GV->getValueType();
+  if (!WebAssembly::isWasmVarAddressSpace(GA->getAddressSpace()) &&
+      (WebAssembly::isWebAssemblyExternrefType(ValTy) ||
+       (ValTy->isArrayTy() && WebAssembly::isWebAssemblyExternrefType(
+                                  ValTy->getArrayElementType())))) {
     SDValue Slot = getExternrefTableSlotIndex(GA, DL, DAG);
     // getExternrefTableSlotIndex materializes the symbol's base slot with a
-    // zero addend; fold any constant element offset (in slots; a reference
-    // pointer is one byte wide) carried in the GlobalAddress.
+    // zero addend; fold any constant element offset carried in the
+    // GlobalAddress. An externref pointer is one byte wide (p10:8:8), so a
+    // byte offset into the array equals the slot offset within its region.
     if (int64_t Off = GA->getOffset()) {
       SDValue C = DAG.getConstant(Off, DL, MVT::i32);
       Slot = DAG.getNode(ISD::ADD, DL, MVT::i32, Slot, C);
