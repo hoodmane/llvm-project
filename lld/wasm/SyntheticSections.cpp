@@ -101,13 +101,17 @@ void DylinkSection::writeBody() {
   // exports and/or imports to the dynamic linker.
   // For exports we need to notify the linker when an export is TLS since the
   // exported value is relative to __tls_base rather than __memory_base.
+  // Similarly, an externref export's value is a __externref_table slot index
+  // (relative to __externref_table_base) rather than a linear-memory address,
+  // so the loader needs to relocate it against a different base.
   // For imports we need to notify the dynamic linker when an import is weak
   // so that knows not to report an error for such symbols.
   std::vector<const Symbol *> importInfo;
   std::vector<const Symbol *> exportInfo;
   for (const Symbol *sym : symtab->symbols()) {
     if (sym->isLive()) {
-      if (sym->isExported() && sym->isTLS() && isa<DefinedData>(sym)) {
+      if (sym->isExported() && (sym->isTLS() || sym->isExternref()) &&
+          isa<DefinedData>(sym)) {
         exportInfo.push_back(sym);
       }
       if (sym->isUndefWeak()) {
@@ -648,7 +652,13 @@ void GlobalSection::writeBody() {
   for (const DefinedData *sym : dataAddressGlobals) {
     WasmGlobalType type{itype, false};
     writeGlobalType(os, type);
-    writeInitExpr(os, intConst(sym->getVA(), is64));
+    if (sym->isExternref())
+      // An exported global externref's address is its __externref_table slot
+      // index (relative to __externref_table_base under PIC), not a
+      // linear-memory address.  Mirror the GOT-entry handling above.
+      writeInitExpr(os, intConst(sym->getExternrefTableIndex(), is64));
+    else
+      writeInitExpr(os, intConst(sym->getVA(), is64));
   }
 }
 
