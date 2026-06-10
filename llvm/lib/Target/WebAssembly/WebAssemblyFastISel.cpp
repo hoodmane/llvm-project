@@ -695,6 +695,12 @@ Register WebAssemblyFastISel::fastMaterializeConstant(const Constant *C) {
       return Register();
     if (GV->isThreadLocal())
       return Register();
+    // A global whose value type is a WebAssembly reference type does not live
+    // in linear memory; its address is its __externref_table slot index, which
+    // requires the table-slot lowering in WebAssemblyTargetLowering. Defer to
+    // SelectionDAG rather than materialize a (wrong) linear-memory address.
+    if (WebAssembly::isWebAssemblyReferenceType(GV->getValueType()))
+      return Register();
     Register ResultReg =
         createResultReg(Subtarget->hasAddr64() ? &WebAssembly::I64RegClass
                                                : &WebAssembly::I32RegClass);

@@ -2351,6 +2351,30 @@ SDValue WebAssemblyTargetLowering::LowerGlobalAddress(SDValue Op,
 
   unsigned OperandFlags = 0;
   const GlobalValue *GV = GA->getGlobal();
+
+  // A global variable whose value type is a WebAssembly externref type does not
+  // live in linear memory; it names a slot in the linker-synthesized
+  // __externref_table (see IsExternrefTableSlot / emitGlobalVariable). Taking
+  // its address therefore yields its table slot index, consistent with how
+  // loads/stores of the global lower to table.get/table.set on that slot and
+  // with the convention that a pointer to an externref holds a table slot
+  // index. getExternrefTableSlotIndex handles both the static and PIC cases.
+  if (WebAssembly::isWebAssemblyExternrefType(GV->getValueType())) {
+    SDValue Slot = getExternrefTableSlotIndex(GA, DL, DAG);
+    // getExternrefTableSlotIndex materializes the symbol's base slot with a
+    // zero addend; fold any constant element offset (in slots; a reference
+    // pointer is one byte wide) carried in the GlobalAddress.
+    if (int64_t Off = GA->getOffset()) {
+      SDValue C = DAG.getConstant(Off, DL, MVT::i32);
+      Slot = DAG.getNode(ISD::ADD, DL, MVT::i32, Slot, C);
+    }
+    // A table slot index is an i32 regardless of pointer width; widen to the
+    // pointer type when targeting wasm64.
+    if (VT != MVT::i32)
+      Slot = DAG.getNode(ISD::ZERO_EXTEND, DL, VT, Slot);
+    return Slot;
+  }
+
   // Since WebAssembly tables cannot yet be shared accross modules, we don't
   // need special treatment for tables in PIC mode.
   if (isPositionIndependent() &&
