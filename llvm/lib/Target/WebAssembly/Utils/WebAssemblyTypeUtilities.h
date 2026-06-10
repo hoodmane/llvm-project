@@ -45,6 +45,15 @@ inline bool isWebAssemblyReferenceType(const Type *Ty) {
   return isWebAssemblyExternrefType(Ty) || isWebAssemblyFuncrefType(Ty);
 }
 
+/// Return true if this is an externref, or an (possibly multi-dimensional)
+/// array of externref.  Such data globals do not live in linear memory; their
+/// element(s) are allocated as slots in the __externref_table.
+inline bool isWebAssemblyExternrefDataType(const Type *Ty) {
+  while (Ty->isArrayTy())
+    Ty = Ty->getArrayElementType();
+  return isWebAssemblyExternrefType(Ty);
+}
+
 /// Return true if the table represents a WebAssembly table type.
 inline bool isWebAssemblyTableType(const Type *Ty) {
   return Ty->isArrayTy() &&

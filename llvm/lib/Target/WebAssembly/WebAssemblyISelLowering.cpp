@@ -2366,9 +2366,7 @@ SDValue WebAssemblyTargetLowering::LowerGlobalAddress(SDValue Op,
   // cases.
   Type *ValTy = GV->getValueType();
   if (!WebAssembly::isWasmVarAddressSpace(GA->getAddressSpace()) &&
-      (WebAssembly::isWebAssemblyExternrefType(ValTy) ||
-       (ValTy->isArrayTy() && WebAssembly::isWebAssemblyExternrefType(
-                                  ValTy->getArrayElementType())))) {
+      WebAssembly::isWebAssemblyExternrefDataType(ValTy)) {
     SDValue Slot = getExternrefTableSlotIndex(GA, DL, DAG);
     // getExternrefTableSlotIndex materializes the symbol's base slot with a
     // zero addend; fold any constant element offset carried in the

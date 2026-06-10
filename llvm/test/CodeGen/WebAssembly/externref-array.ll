@@ -6,6 +6,11 @@
 ; RUN: llc < %s --mtriple=wasm32-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC
 ; RUN: llc < %s --mtriple=wasm64-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC,PIC64
 
+; An array of externref (including a multi-dimensional one) must be flagged as an
+; externref data symbol so the linker gives it __externref_table semantics rather
+; than placing it in linear memory.
+; RUN: llc < %s --mtriple=wasm32-unknown-unknown -filetype=obj -mattr=+reference-types | obj2yaml | FileCheck %s --check-prefix=SYM
+
 ; An array global of externref `__externref_t c[N]` lowers to
 ; `[N x ptr addrspace(10)]`. Each element is one byte wide (p10:8:8), so the
 ; byte offset into the array equals the slot offset within the array's region of
@@ -17,6 +22,13 @@
 
 ; CHECK: .tabletype __externref_table, externref
 ; PIC: .tabletype __externref_table, externref
+
+; SYM:      Name:            c
+; SYM-NEXT: Flags:           [ VISIBILITY_HIDDEN, EXTERNREF ]
+; SYM:      Name:            d
+; SYM-NEXT: Flags:           [ VISIBILITY_HIDDEN, EXTERNREF ]
+; SYM:      Name:            e
+; SYM-NEXT: Flags:           [ VISIBILITY_HIDDEN, EXTERNREF ]
 
 @c = hidden global [10 x %externref] zeroinitializer, align 1
 

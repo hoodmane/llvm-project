@@ -191,8 +191,8 @@ void WebAssemblyAsmPrinter::emitGlobalVariable(const GlobalVariable *GV) {
     // A global variable whose value type is a WebAssembly reference type lives
     // in the __externref_table rather than linear memory.  Mark its (data)
     // symbol so the linker gives its GOT entry externref-table semantics under
-    // PIC.
-    if (WebAssembly::isWebAssemblyExternrefType(GV->getValueType())) {
+    // PIC.  This also covers arrays of externref.
+    if (WebAssembly::isWebAssemblyExternrefDataType(GV->getValueType())) {
       auto *Sym = static_cast<MCSymbolWasm *>(getSymbol(GV));
       Sym->setExternref();
     }

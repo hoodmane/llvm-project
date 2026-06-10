@@ -57,8 +57,9 @@ WebAssemblyMCInstLower::GetGlobalAddressSymbol(const MachineOperand &MO) const {
     // in the __externref_table rather than linear memory.  Mark its (data)
     // symbol so the linker gives its GOT entry externref-table semantics under
     // PIC.  This covers both defined and merely-referenced (e.g. imported)
-    // externref globals, since every use flows through here.
-    if (WebAssembly::isWebAssemblyExternrefType(Global->getValueType()))
+    // externref globals, since every use flows through here, as well as arrays
+    // of externref.
+    if (WebAssembly::isWebAssemblyExternrefDataType(Global->getValueType()))
       WasmSym->setExternref();
     // If the symbol doesn't have an explicit WasmSymbolType yet and the
     // GlobalValue is actually a WebAssembly global, then ensure the symbol is a
