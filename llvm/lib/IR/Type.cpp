@@ -1132,9 +1132,18 @@ static TargetTypeInfo getTargetTypeInfo(const TargetExtType *Ty) {
                           TargetExtType::CanBeVectorElement);
   }
 
-  // Opaque types in the WebAssembly name space.
-  if (Name == "wasm.funcref" || Name == "wasm.externref")
-    return TargetTypeInfo(PointerType::getUnqual(C), TargetExtType::HasZeroInit,
+  // Opaque types in the WebAssembly name space. Use the matching non-integral
+  // address space as the layout type (externref -> addrspace 10, funcref ->
+  // addrspace 20) so the alloc size/alignment is 1 byte under the target data
+  // layout (p10:8:8 / p20:8:8). This keeps reference values 1 byte wide, as
+  // they were when modeled as ptr addrspace(10)/(20), so that an array of
+  // reference values maps 1:1 onto consecutive table slots.
+  if (Name == "wasm.externref")
+    return TargetTypeInfo(PointerType::get(C, 10), TargetExtType::HasZeroInit,
+                          TargetExtType::CanBeGlobal,
+                          TargetExtType::CanBeLocal);
+  if (Name == "wasm.funcref")
+    return TargetTypeInfo(PointerType::get(C, 20), TargetExtType::HasZeroInit,
                           TargetExtType::CanBeGlobal,
                           TargetExtType::CanBeLocal);
 
