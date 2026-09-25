@@ -1564,9 +1564,108 @@ static void EnterNewDeleteCleanup(CodeGenFunction &CGF, const CXXNewExpr *E,
   CGF.initFullExprCleanup();
 }
 
+/// A WebAssembly externref cannot live in linear memory, so `new` of an
+/// externref (or an array of them) does not go through operator new at all:
+/// the element(s) are allocated as slots in the linker-synthesized
+/// __externref_table by the compiler-rt allocator, and the resulting
+/// `__externref_t *` is the index of the first slot (zero-extended to pointer
+/// width). Freshly allocated slots are null, so value-initialization and the
+/// zero-fill of an under-specified init list are no-ops; only explicitly
+/// provided initializers are stored (which lower to table.set).
+static llvm::Value *EmitWasmExternrefNewExpr(CodeGenFunction &CGF,
+                                             const CXXNewExpr *E,
+                                             QualType allocType) {
+  CodeGenModule &CGM = CGF.CGM;
+  CGBuilderTy &Builder = CGF.Builder;
+  ASTContext &Ctx = CGF.getContext();
+  QualType sizeType = Ctx.getSizeType();
+
+  // Number of externref slots to allocate: the array size (if any) times the
+  // number of externrefs in one allocated element (for `new T[n][k]`).
+  llvm::Value *numSlots = nullptr;
+  if (E->isArray()) {
+    const Expr *arraySize = *E->getArraySize();
+    numSlots = CGF.EmitScalarExpr(arraySize);
+    numSlots = Builder.CreateIntCast(numSlots, CGF.SizeTy,
+                                     arraySize->getType()->isSignedIntegerType(),
+                                     "externref.count");
+    uint64_t perElement = 1;
+    if (const auto *CAT = Ctx.getAsConstantArrayType(E->getAllocatedType()))
+      perElement = Ctx.getConstantArrayElementCount(CAT);
+    if (perElement != 1)
+      numSlots = Builder.CreateMul(
+          numSlots, llvm::ConstantInt::get(CGF.SizeTy, perElement));
+  } else {
+    numSlots = llvm::ConstantInt::get(CGF.SizeTy, 1);
+  }
+
+  // __externref_t *__externref_table_alloc(size_t nrefs);
+  QualType externrefPtrTy = Ctx.getPointerType(allocType);
+  llvm::FunctionCallee allocFn = CGM.CreateRuntimeFunction(
+      externrefPtrTy, {sizeType}, "__externref_table_alloc");
+  llvm::CallBase *call = CGF.EmitRuntimeCall(allocFn, numSlots);
+  if (auto *CGDI = CGF.getDebugInfo())
+    CGDI->addHeapAllocSiteMetadata(call, allocType, E->getExprLoc());
+  llvm::Value *resultPtr = call;
+
+  const Expr *Init = E->getInitializer();
+  if (!Init)
+    return resultPtr;
+
+  // The allocator returns null on failure; guard the stores.
+  llvm::BasicBlock *nullCheckBB = Builder.GetInsertBlock();
+  llvm::BasicBlock *notNullBB = CGF.createBasicBlock("new.notnull");
+  llvm::BasicBlock *contBB = CGF.createBasicBlock("new.cont");
+  Builder.CreateCondBr(Builder.CreateIsNull(resultPtr, "new.isnull"), contBB,
+                       notNullBB);
+  CGF.EmitBlock(notNullBB);
+
+  CharUnits align = Ctx.getTypeAlignInChars(allocType);
+  llvm::Type *elementTy = CGF.ConvertTypeForMem(allocType);
+  Address result(resultPtr, elementTy, align);
+
+  auto storeOne = [&](const Expr *elt, Address addr) {
+    StoreAnyExprIntoOneUnit(CGF, elt, allocType, addr,
+                            AggValueSlot::DoesNotOverlap);
+  };
+
+  if (!E->isArray()) {
+    storeOne(Init, result);
+  } else {
+    // Only an explicit element list needs stores; anything else (value-init,
+    // `T[n]()`) leaves the fresh slots null.
+    ArrayRef<Expr *> inits;
+    if (const auto *ILE = dyn_cast<InitListExpr>(Init))
+      inits = ILE->inits();
+    else if (const auto *CPLIE =
+                 dyn_cast<CXXParenListInitExpr>(Init->IgnoreParenImpCasts()))
+      inits = CPLIE->getInitExprs();
+    if (!inits.empty() && E->getAllocatedType()->isArrayType()) {
+      // The elements would be arrays of externref themselves; storing those
+      // goes through aggregate emission (memset zero-fill), which cannot be
+      // used on the externref table.
+      CGF.CGM.ErrorUnsupported(
+          E, "initializer list for multi-dimensional externref array new");
+      inits = {};
+    }
+    for (unsigned i = 0, n = inits.size(); i != n; ++i) {
+      Address eltAddr = result;
+      if (i != 0)
+        eltAddr = Builder.CreateConstInBoundsGEP(result, i, "externref.elt");
+      storeOne(inits[i], eltAddr);
+    }
+  }
+
+  CGF.EmitBlock(contBB);
+  return resultPtr;
+}
+
 llvm::Value *CodeGenFunction::EmitCXXNewExpr(const CXXNewExpr *E) {
   // The element type being allocated.
   QualType allocType = getContext().getBaseElementType(E->getAllocatedType());
+
+  if (allocType->isWebAssemblyExternrefType())
+    return EmitWasmExternrefNewExpr(*this, E, allocType);
 
   // 1. Build a call to the allocation function.
   FunctionDecl *allocator = E->getOperatorNew();
@@ -2091,6 +2190,25 @@ static void EmitArrayDelete(CodeGenFunction &CGF, const CXXDeleteExpr *E,
 void CodeGenFunction::EmitCXXDeleteExpr(const CXXDeleteExpr *E) {
   const Expr *Arg = E->getArgument();
   Address Ptr = EmitPointerWithAlignment(Arg);
+
+  // A pointer to a WebAssembly externref is an __externref_table slot index
+  // handed out by the compiler-rt allocator (see EmitWasmExternrefNewExpr),
+  // not linear memory, so operator delete does not apply. The allocator
+  // records each block's size itself (there is nowhere in the table to keep
+  // an array cookie), so both `delete` and `delete[]` release the block with
+  // the same unsized call, which also nulls the slots and ignores a null
+  // pointer.
+  if (getContext()
+          .getBaseElementType(E->getDestroyedType())
+          ->isWebAssemblyExternrefType()) {
+    // void __externref_table_free(__externref_t *p);
+    QualType destroyedTy = getContext().getBaseElementType(E->getDestroyedType());
+    llvm::FunctionCallee freeFn = CGM.CreateRuntimeFunction(
+        getContext().VoidTy, {getContext().getPointerType(destroyedTy)},
+        "__externref_table_free");
+    EmitRuntimeCall(freeFn, Ptr.emitRawPointer(*this));
+    return;
+  }
 
   // Null check the pointer.
   //

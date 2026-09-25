@@ -28,3 +28,28 @@ void *ret_void_ptr() {
 
   return table;             // expected-error {{cannot return a WebAssembly table}}
 }
+
+// new / delete of externref allocate and release __externref_table slots.
+// Placement new cannot be honoured since the storage is never linear memory.
+void *buf;
+void new_delete(__externref_t v, int n) {
+  __externref_t *a = new __externref_t;
+  __externref_t *b = new __externref_t(v);
+  __externref_t *c = new __externref_t();
+  __externref_t *d = new __externref_t[n];
+  __externref_t *e = new __externref_t[3]{v, v};
+  __externref_t(*f)[3] = new __externref_t[n][3];
+  __externref_t *g = ::new __externref_t;
+  delete a;
+  delete b;
+  delete c;
+  delete[] d;
+  delete[] e;
+  delete[] f;
+  ::delete g;
+  new (buf) __externref_t;    // expected-error {{placement new of WebAssembly reference type '__externref_t' is not allowed; references are always allocated in the externref table}}
+  new (buf) __externref_t[n]; // expected-error {{placement new of WebAssembly reference type '__externref_t' is not allowed; references are always allocated in the externref table}}
+  new (buf) __externref_t[2][3]; // expected-error {{placement new of WebAssembly reference type '__externref_t[3]' is not allowed; references are always allocated in the externref table}}
+  new __externref_t *;         // pointers to externref live in linear memory as usual
+  delete static_cast<__externref_t **>(nullptr);
+}

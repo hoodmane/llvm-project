@@ -2276,6 +2276,20 @@ ExprResult Sema::BuildCXXNew(SourceRange Range, bool UseGlobal,
   if (CheckAllocatedType(AllocType, TypeRange.getBegin(), TypeRange))
     return ExprError();
 
+  // A WebAssembly externref cannot live in linear memory: `new` of an
+  // externref (or an array of them) always allocates slots in the externref
+  // table (see CodeGenFunction::EmitCXXNewExpr), so placement arguments cannot
+  // be honoured. The usual global operator new/delete are still selected below
+  // so that the AST is well-formed for everything that inspects them, but
+  // CodeGen substitutes the externref table allocator.
+  if (!AllocType->isDependentType() &&
+      Context.getBaseElementType(AllocType)->isWebAssemblyExternrefType() &&
+      !PlacementArgs.empty()) {
+    Diag(PlacementLParen, diag::err_wasm_externref_placement_new)
+        << AllocType << SourceRange(PlacementLParen, PlacementRParen);
+    return ExprError();
+  }
+
   if (ArraySize && !checkArrayElementAlignment(AllocType, TypeRange.getBegin()))
     return ExprError();
 
@@ -2687,7 +2701,11 @@ bool Sema::CheckAllocatedType(QualType AllocType, SourceLocation Loc,
   else if (AllocType->isReferenceType())
     return Diag(Loc, diag::err_bad_new_type)
       << AllocType << 1 << R;
+  // WebAssembly externrefs are sizeless but can be allocated: they get slots
+  // in the externref table rather than bytes of linear memory.
   else if (!AllocType->isDependentType() &&
+           !Context.getBaseElementType(AllocType)
+                ->isWebAssemblyExternrefType() &&
            RequireCompleteSizedType(
                Loc, AllocType, diag::err_new_incomplete_or_sizeless_type, R))
     return true;
@@ -4114,7 +4132,10 @@ Sema::ActOnCXXDelete(SourceLocation StartLoc, bool UseGlobal,
           << (LangOpts.CPlusPlus26 ? Pointee : Type)
           << Ex.get()->getSourceRange();
     } else if (Pointee->isFunctionType() || Pointee->isVoidType() ||
-               Pointee->isSizelessType()) {
+               (Pointee->isSizelessType() &&
+                // A WebAssembly externref pointer is an externref table slot
+                // index; deleting it releases the slot(s).
+                !Pointee->isWebAssemblyExternrefType())) {
       return ExprError(Diag(StartLoc, diag::err_delete_operand)
         << Type << Ex.get()->getSourceRange());
     } else if (!Pointee->isDependentType()) {
