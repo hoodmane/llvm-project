@@ -7181,8 +7181,12 @@ ExprResult Sema::BuildPseudoDestructorExpr(Expr *Base,
   if (CheckArrow(*this, ObjectType, Base, OpKind, OpLoc))
     return ExprError();
 
+  // A WebAssembly externref is not classified as a scalar, but destroying one
+  // is a no-op just like for any trivial type; std::destroy_at (and thus
+  // allocator_traits::destroy) needs the pseudo-destructor to be accepted.
   if (!ObjectType->isDependentType() && !ObjectType->isScalarType() &&
-      !ObjectType->isVectorType() && !ObjectType->isMatrixType()) {
+      !ObjectType->isVectorType() && !ObjectType->isMatrixType() &&
+      !ObjectType->isWebAssemblyExternrefType()) {
     if (getLangOpts().MSVCCompat && ObjectType->isVoidType())
       Diag(OpLoc, diag::ext_pseudo_dtor_on_void) << Base->getSourceRange();
     else {

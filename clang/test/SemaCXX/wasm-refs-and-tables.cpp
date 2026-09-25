@@ -72,3 +72,15 @@ void lambda_captures(__externref_t v, __externref_t &vr) {
   [&x = v] { use(x); }();
 #endif
 }
+
+// Pseudo-destructor calls on an externref are accepted (and are no-ops), as
+// for any trivial type; std::destroy_at relies on this.
+typedef __externref_t externref_t;
+template <class T> void destroy_at(T *p) { p->~T(); }
+void pseudo_dtor(__externref_t *p, __externref_t &r) {
+  p->~__externref_t();
+  r.~__externref_t();
+  p->~externref_t();
+  destroy_at(p);
+  p->externref_t::~externref_t();
+}

@@ -76,3 +76,13 @@ void capture_by_ref(__externref_t v) {
 // CHECK:         [[REF:%.*]] = load ptr, ptr [[F]]
 // CHECK:         [[VAL:%.*]] = load target("wasm.externref"), ptr [[REF]], align 1
 // CHECK:         call void @_Z6helperu11externref_t(target("wasm.externref") [[VAL]])
+
+// A pseudo-destructor call on an externref is a no-op: the base is evaluated
+// and nothing else is emitted (no load, no table access).
+// CHECK-LABEL: define{{.*}} void @_Z11pseudo_dtorPu11externref_t(ptr noundef %p)
+// CHECK-NEXT:  entry:
+// CHECK-NEXT:    %p.addr = alloca ptr
+// CHECK-NEXT:    store ptr %p, ptr %p.addr
+// CHECK-NEXT:    load ptr, ptr %p.addr
+// CHECK-NEXT:    ret void
+void pseudo_dtor(__externref_t *p) { p->~__externref_t(); }
