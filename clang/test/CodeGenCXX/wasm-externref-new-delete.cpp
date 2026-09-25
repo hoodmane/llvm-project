@@ -105,3 +105,41 @@ __externref_t *global_new() { return ::new __externref_t; }
 // CHECK-NOT: @_Zna
 // CHECK-NOT: @_Zdl
 // CHECK-NOT: @_Zda
+
+// The reserved placement form constructs into an existing slot: the
+// initializer is stored through the placement pointer and nothing is
+// allocated. This is what std::construct_at expands to.
+typedef __SIZE_TYPE__ size_t;
+void *operator new(size_t, void *) noexcept;
+void *operator new[](size_t, void *) noexcept;
+
+// CHECK-LABEL: define{{.*}} void @_Z9placementPu11externref_tu11externref_t(ptr noundef %slot, target("wasm.externref") %v)
+// CHECK-NOT:     __externref_table_alloc
+// CHECK-NOT:     icmp
+// CHECK:         [[S:%.*]] = load ptr, ptr %slot.addr
+// CHECK-NEXT:    [[V:%.*]] = load target("wasm.externref"), ptr %v.addr, align 1
+// CHECK-NEXT:    store target("wasm.externref") [[V]], ptr [[S]], align 1
+// CHECK-NOT:     __externref_table_alloc
+// CHECK:         ret void
+void placement(__externref_t *slot, __externref_t v) {
+  ::new (static_cast<void *>(slot)) __externref_t(v);
+}
+
+// Default-initialising placement new is a no-op besides evaluating the slot.
+// CHECK-LABEL: define{{.*}} void @_Z17placement_defaultPu11externref_t(ptr noundef %slot)
+// CHECK-NOT:     store target
+// CHECK-NOT:     __externref_table_alloc
+// CHECK:         ret void
+void placement_default(__externref_t *slot) { new (slot) __externref_t; }
+
+// Placement array new stores each explicit element in place.
+// CHECK-LABEL: define{{.*}} void @_Z15placement_arrayPu11externref_tu11externref_t(ptr noundef %slot, target("wasm.externref") %v)
+// CHECK-NOT:     __externref_table_alloc
+// CHECK:         [[S:%.*]] = load ptr, ptr %slot.addr
+// CHECK:         store target("wasm.externref") %{{.*}}, ptr [[S]], align 1
+// CHECK:         [[E1:%.*]] = getelementptr inbounds target("wasm.externref"), ptr [[S]], {{i32|i64}} 1
+// CHECK:         store target("wasm.externref") %{{.*}}, ptr [[E1]], align 1
+// CHECK:         ret void
+void placement_array(__externref_t *slot, __externref_t v) {
+  new (slot) __externref_t[4]{v, v};
+}

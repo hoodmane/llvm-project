@@ -1572,6 +1572,11 @@ static void EnterNewDeleteCleanup(CodeGenFunction &CGF, const CXXNewExpr *E,
 /// width). Freshly allocated slots are null, so value-initialization and the
 /// zero-fill of an under-specified init list are no-ops; only explicitly
 /// provided initializers are stored (which lower to table.set).
+///
+/// The reserved placement form `new (slot) __externref_t(...)` (what
+/// std::construct_at expands to) constructs into an existing slot: no
+/// allocation happens and the initializer is simply stored through the
+/// placement pointer.
 static llvm::Value *EmitWasmExternrefNewExpr(CodeGenFunction &CGF,
                                              const CXXNewExpr *E,
                                              QualType allocType) {
@@ -1580,45 +1585,59 @@ static llvm::Value *EmitWasmExternrefNewExpr(CodeGenFunction &CGF,
   ASTContext &Ctx = CGF.getContext();
   QualType sizeType = Ctx.getSizeType();
 
-  // Number of externref slots to allocate: the array size (if any) times the
-  // number of externrefs in one allocated element (for `new T[n][k]`).
-  llvm::Value *numSlots = nullptr;
-  if (E->isArray()) {
-    const Expr *arraySize = *E->getArraySize();
-    numSlots = CGF.EmitScalarExpr(arraySize);
-    numSlots = Builder.CreateIntCast(numSlots, CGF.SizeTy,
-                                     arraySize->getType()->isSignedIntegerType(),
-                                     "externref.count");
-    uint64_t perElement = 1;
-    if (const auto *CAT = Ctx.getAsConstantArrayType(E->getAllocatedType()))
-      perElement = Ctx.getConstantArrayElementCount(CAT);
-    if (perElement != 1)
-      numSlots = Builder.CreateMul(
-          numSlots, llvm::ConstantInt::get(CGF.SizeTy, perElement));
+  const Expr *Init = E->getInitializer();
+  llvm::Value *resultPtr = nullptr;
+  bool isPlacement = E->getOperatorNew()->isReservedGlobalPlacementOperator();
+
+  if (isPlacement) {
+    assert(E->getNumPlacementArgs() == 1);
+    resultPtr = CGF.EmitScalarExpr(*E->placement_arguments().begin());
+    if (!Init)
+      return resultPtr;
   } else {
-    numSlots = llvm::ConstantInt::get(CGF.SizeTy, 1);
+    // Number of externref slots to allocate: the array size (if any) times
+    // the number of externrefs in one allocated element (for `new T[n][k]`).
+    llvm::Value *numSlots = nullptr;
+    if (E->isArray()) {
+      const Expr *arraySize = *E->getArraySize();
+      numSlots = CGF.EmitScalarExpr(arraySize);
+      numSlots = Builder.CreateIntCast(
+          numSlots, CGF.SizeTy, arraySize->getType()->isSignedIntegerType(),
+          "externref.count");
+      uint64_t perElement = 1;
+      if (const auto *CAT = Ctx.getAsConstantArrayType(E->getAllocatedType()))
+        perElement = Ctx.getConstantArrayElementCount(CAT);
+      if (perElement != 1)
+        numSlots = Builder.CreateMul(
+            numSlots, llvm::ConstantInt::get(CGF.SizeTy, perElement));
+    } else {
+      numSlots = llvm::ConstantInt::get(CGF.SizeTy, 1);
+    }
+
+    // __externref_t *__externref_table_alloc(size_t nrefs);
+    QualType externrefPtrTy = Ctx.getPointerType(allocType);
+    llvm::FunctionCallee allocFn = CGM.CreateRuntimeFunction(
+        externrefPtrTy, {sizeType}, "__externref_table_alloc");
+    llvm::CallBase *call = CGF.EmitRuntimeCall(allocFn, numSlots);
+    if (auto *CGDI = CGF.getDebugInfo())
+      CGDI->addHeapAllocSiteMetadata(call, allocType, E->getExprLoc());
+    resultPtr = call;
+    if (!Init)
+      return resultPtr;
   }
 
-  // __externref_t *__externref_table_alloc(size_t nrefs);
-  QualType externrefPtrTy = Ctx.getPointerType(allocType);
-  llvm::FunctionCallee allocFn = CGM.CreateRuntimeFunction(
-      externrefPtrTy, {sizeType}, "__externref_table_alloc");
-  llvm::CallBase *call = CGF.EmitRuntimeCall(allocFn, numSlots);
-  if (auto *CGDI = CGF.getDebugInfo())
-    CGDI->addHeapAllocSiteMetadata(call, allocType, E->getExprLoc());
-  llvm::Value *resultPtr = call;
-
-  const Expr *Init = E->getInitializer();
-  if (!Init)
-    return resultPtr;
-
-  // The allocator returns null on failure; guard the stores.
-  llvm::BasicBlock *nullCheckBB = Builder.GetInsertBlock();
-  llvm::BasicBlock *notNullBB = CGF.createBasicBlock("new.notnull");
-  llvm::BasicBlock *contBB = CGF.createBasicBlock("new.cont");
-  Builder.CreateCondBr(Builder.CreateIsNull(resultPtr, "new.isnull"), contBB,
-                       notNullBB);
-  CGF.EmitBlock(notNullBB);
+  // The allocator returns null on failure; guard the stores. (Placement new
+  // into a null slot is undefined behaviour, as for any placement new, so no
+  // check is needed there.)
+  llvm::BasicBlock *notNullBB = nullptr;
+  llvm::BasicBlock *contBB = nullptr;
+  if (!isPlacement) {
+    notNullBB = CGF.createBasicBlock("new.notnull");
+    contBB = CGF.createBasicBlock("new.cont");
+    Builder.CreateCondBr(Builder.CreateIsNull(resultPtr, "new.isnull"), contBB,
+                         notNullBB);
+    CGF.EmitBlock(notNullBB);
+  }
 
   CharUnits align = Ctx.getTypeAlignInChars(allocType);
   llvm::Type *elementTy = CGF.ConvertTypeForMem(allocType);
@@ -1656,7 +1675,8 @@ static llvm::Value *EmitWasmExternrefNewExpr(CodeGenFunction &CGF,
     }
   }
 
-  CGF.EmitBlock(contBB);
+  if (contBB)
+    CGF.EmitBlock(contBB);
   return resultPtr;
 }
 

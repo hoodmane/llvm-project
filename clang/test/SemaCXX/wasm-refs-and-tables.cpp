@@ -47,11 +47,29 @@ void new_delete(__externref_t v, int n) {
   delete[] e;
   delete[] f;
   ::delete g;
-  new (buf) __externref_t;    // expected-error {{placement new of WebAssembly reference type '__externref_t' is not allowed; references are always allocated in the externref table}}
-  new (buf) __externref_t[n]; // expected-error {{placement new of WebAssembly reference type '__externref_t' is not allowed; references are always allocated in the externref table}}
-  new (buf) __externref_t[2][3]; // expected-error {{placement new of WebAssembly reference type '__externref_t[3]' is not allowed; references are always allocated in the externref table}}
   new __externref_t *;         // pointers to externref live in linear memory as usual
   delete static_cast<__externref_t **>(nullptr);
+}
+
+// The reserved placement form constructs into an existing table slot (this is
+// what std::construct_at uses); placement new with any other allocation
+// arguments cannot be honoured.
+typedef __SIZE_TYPE__ size_t;
+void *operator new(size_t, void *) noexcept;
+void *operator new[](size_t, void *) noexcept;
+struct Arena {};
+void *operator new(size_t, Arena &);
+void *operator new[](size_t, Arena &);
+void placement_new(__externref_t *slot, __externref_t v, int n, Arena &arena) {
+  new (slot) __externref_t;
+  new (slot) __externref_t(v);
+  new (slot) __externref_t();
+  ::new (static_cast<void *>(slot)) __externref_t(v);
+  new (slot) __externref_t[n];
+  new (slot) __externref_t[2]{v, v};
+  new (arena) __externref_t;    // expected-error {{placement new of WebAssembly reference type '__externref_t' with custom allocation arguments is not allowed; references live in the externref table, so only placement new into an existing slot ('new (slot) T') is supported}}
+  new (arena) __externref_t[n]; // expected-error {{placement new of WebAssembly reference type '__externref_t' with custom allocation arguments is not allowed}}
+  new (buf) int;                // unrelated types are unaffected
 }
 
 // Lambdas may capture an externref by reference (the closure then holds an

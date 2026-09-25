@@ -13908,8 +13908,9 @@ def err_wasm_table_must_be_static : Error<
 def err_wasm_builtin_arg_must_be_table_type : Error <
   "%ordinal0 argument must be a WebAssembly table">;
 def err_wasm_externref_placement_new : Error<
-  "placement new of WebAssembly reference type %0 is not allowed; "
-  "references are always allocated in the externref table">;
+  "placement new of WebAssembly reference type %0 with custom allocation "
+  "arguments is not allowed; references live in the externref table, so only "
+  "placement new into an existing slot ('new (slot) T') is supported">;
 def err_wasm_builtin_arg_must_be_externref_type : Error <
   "%ordinal0 argument must be an externref">;
 def err_wasm_builtin_arg_must_match_table_element_type : Error <

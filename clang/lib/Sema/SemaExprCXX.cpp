@@ -2276,20 +2276,6 @@ ExprResult Sema::BuildCXXNew(SourceRange Range, bool UseGlobal,
   if (CheckAllocatedType(AllocType, TypeRange.getBegin(), TypeRange))
     return ExprError();
 
-  // A WebAssembly externref cannot live in linear memory: `new` of an
-  // externref (or an array of them) always allocates slots in the externref
-  // table (see CodeGenFunction::EmitCXXNewExpr), so placement arguments cannot
-  // be honoured. The usual global operator new/delete are still selected below
-  // so that the AST is well-formed for everything that inspects them, but
-  // CodeGen substitutes the externref table allocator.
-  if (!AllocType->isDependentType() &&
-      Context.getBaseElementType(AllocType)->isWebAssemblyExternrefType() &&
-      !PlacementArgs.empty()) {
-    Diag(PlacementLParen, diag::err_wasm_externref_placement_new)
-        << AllocType << SourceRange(PlacementLParen, PlacementRParen);
-    return ExprError();
-  }
-
   if (ArraySize && !checkArrayElementAlignment(AllocType, TypeRange.getBegin()))
     return ExprError();
 
@@ -2468,6 +2454,22 @@ ExprResult Sema::BuildCXXNew(SourceRange Range, bool UseGlobal,
                               AllocType, ArraySize.has_value(), IAP,
                               PlacementArgs, OperatorNew, OperatorDelete))
     return ExprError();
+
+  // A WebAssembly externref cannot live in linear memory: `new` of an
+  // externref (or an array of them) allocates slots in the externref table
+  // (see CodeGenFunction::EmitCXXNewExpr) rather than calling operator new.
+  // The usual global operator new/delete are still selected above so that the
+  // AST is well-formed for everything that inspects them; CodeGen substitutes
+  // the table allocator. The one placement form that makes sense is the
+  // reserved `new (slot) T(...)` used by std::construct_at, which constructs
+  // into an existing slot; other placement arguments cannot be honoured.
+  if (OperatorNew && !PlacementArgs.empty() &&
+      Context.getBaseElementType(AllocType)->isWebAssemblyExternrefType() &&
+      !OperatorNew->isReservedGlobalPlacementOperator()) {
+    Diag(PlacementLParen, diag::err_wasm_externref_placement_new)
+        << AllocType << SourceRange(PlacementLParen, PlacementRParen);
+    return ExprError();
+  }
 
   // If this is an array allocation, compute whether the usual array
   // deallocation function for the type has a size_t parameter.
