@@ -4449,7 +4449,15 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(Expr *E,
   // the expression to be complete. 'sizeof' requires the expression's type to
   // be complete (and will attempt to complete it if it's an array of unknown
   // bound).
-  if (ExprKind == UETT_AlignOf || ExprKind == UETT_PreferredAlignOf) {
+  //
+  // WebAssembly reference types are sizeless in the sense that they cannot be
+  // stored in linear memory, but a pointer to one is an externref table slot
+  // index, so sizeof and alignof are well-defined (both 1: one slot per
+  // element) and libc++ idioms such as `static_assert(sizeof(T) >= 0)` in
+  // std::default_delete must work for them.
+  if (Context.getBaseElementType(E->getType()).isWebAssemblyReferenceType()) {
+    // Complete; nothing to check.
+  } else if (ExprKind == UETT_AlignOf || ExprKind == UETT_PreferredAlignOf) {
     if (RequireCompleteSizedType(
             E->getExprLoc(), Context.getBaseElementType(E->getType()),
             diag::err_sizeof_alignof_incomplete_or_sizeless_type,
@@ -4754,7 +4762,10 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(QualType ExprType,
                                       ExprKind))
     return false;
 
-  if (RequireCompleteSizedType(
+  // See CheckUnaryExprOrTypeTraitOperand(Expr *): WebAssembly reference
+  // types have a well-defined sizeof/alignof of 1 (one externref table slot).
+  if (!Context.getBaseElementType(ExprType).isWebAssemblyReferenceType() &&
+      RequireCompleteSizedType(
           OpLoc, ExprType, diag::err_sizeof_alignof_incomplete_or_sizeless_type,
           KWName, ExprRange))
     return true;
@@ -11457,6 +11468,11 @@ static bool checkArithmeticIncompletePointerType(Sema &S, SourceLocation Loc,
 
   assert(ResType->isAnyPointerType());
   QualType PointeeTy = ResType->getPointeeType();
+  // A pointer to a WebAssembly reference type is an externref table slot
+  // index, one slot per element, so arithmetic on it is well-defined even
+  // though the pointee is otherwise sizeless.
+  if (S.Context.getBaseElementType(PointeeTy).isWebAssemblyReferenceType())
+    return false;
   return S.RequireCompleteSizedType(
       Loc, PointeeTy,
       diag::err_typecheck_arithmetic_incomplete_or_sizeless_type,

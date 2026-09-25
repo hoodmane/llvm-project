@@ -105,6 +105,15 @@ void funcref_uses(funcref_t fr) {
 // Pointers to externref behave like ordinary pointers in unary and binary
 // expressions (unlike tables, which are rejected below in func()).
 int pointer_exprs(__externref_t *p, __externref_t *q) {
+  // Arithmetic steps one table slot per element.
+  __externref_t *r = p + 1;
+  r = r - 1;
+  r++;
+  --r;
+  r += 3;
+  (void)(q - p);
+  (void)r[2];
+  (void)&p[2];
   if (!p)
     return 0;
   if (p == 0 || q != 0)
@@ -121,20 +130,24 @@ __externref_t func(__externref_t ref) {
   int foo = 40;
   (__externref_t *)(&foo);
   (__externref_t ****)(&foo);
-  sizeof(ref);                 // expected-error {{invalid application of 'sizeof' to sizeless type '__externref_t'}}
-  sizeof(__externref_t);       // expected-error {{invalid application of 'sizeof' to sizeless type '__externref_t'}}
-  sizeof(__externref_t[0]);
+  // An externref pointer is an externref table slot index with one slot per
+  // element, so sizeof and alignof are both 1 (and arrays scale by count).
+  _Static_assert(sizeof(ref) == 1, "");
+  _Static_assert(sizeof(__externref_t) == 1, "");
+  _Static_assert(sizeof(__externref_t[0]) == 0, "");
+  _Static_assert(sizeof(__externref_t[4]) == 4, "");
+  _Static_assert(sizeof(__externref_t[2][3]) == 6, "");
   sizeof(table);               // expected-error {{invalid application of 'sizeof' to WebAssembly table}}
   sizeof(__externref_t[0][0]);
   sizeof(__externref_t *);
   sizeof(__externref_t ***);
   // expected-warning@+1 {{'_Alignof' applied to an expression is a GNU extension}}
-  _Alignof(ref);                 // expected-error {{invalid application of 'alignof' to sizeless type '__externref_t'}}
-  _Alignof(__externref_t);       // expected-error {{invalid application of 'alignof' to sizeless type '__externref_t'}}
-  _Alignof(__externref_t[]);     // expected-error {{invalid application of 'alignof' to sizeless type '__externref_t'}}
-  _Alignof(__externref_t[0]);    // expected-error {{invalid application of 'alignof' to sizeless type '__externref_t'}}
+  _Static_assert(_Alignof(ref) == 1, "");
+  _Static_assert(_Alignof(__externref_t) == 1, "");
+  _Static_assert(_Alignof(__externref_t[]) == 1, "");
+  _Static_assert(_Alignof(__externref_t[0]) == 1, "");
   _Alignof(table);               // expected-warning {{'_Alignof' applied to an expression is a GNU extension}} expected-error {{invalid application of 'alignof' to WebAssembly table}}
-  _Alignof(__externref_t[0][0]); // expected-error {{invalid application of 'alignof' to sizeless type '__externref_t'}}
+  _Static_assert(_Alignof(__externref_t[0][0]) == 1, "");
   _Alignof(__externref_t *);
   _Alignof(__externref_t ***);
   varargs(1, ref);               // expected-error {{cannot pass expression of type '__externref_t' to variadic function}}

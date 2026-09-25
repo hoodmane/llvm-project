@@ -2421,9 +2421,14 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     Align = 8;                                                                 \
     break;
 #include "clang/Basic/RISCVVTypes.def"
+  // WebAssembly reference types cannot live in linear memory and are treated
+  // as sizeless where that matters (struct fields, varargs, ...), but a
+  // pointer to an externref is an index into the externref table with one
+  // slot per element, so for sizeof/alignof and pointer arithmetic they
+  // behave as one-byte, byte-aligned objects.
 #define WASM_TYPE(Name, Id, SingletonId)                                       \
   case BuiltinType::Id:                                                        \
-    Width = 0;                                                                 \
+    Width = 8;                                                                 \
     Align = 8;                                                                 \
     break;
 #include "clang/Basic/WebAssemblyReferenceTypes.def"
