@@ -954,6 +954,7 @@ set(s390x_SOURCES
 
 
 set(wasm_SOURCES
+  wasm/externref_table_alloc.c
   ${GENERIC_TF_SOURCES}
   ${GENERIC_SOURCES}
 )
