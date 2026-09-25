@@ -102,6 +102,20 @@ void funcref_uses(funcref_t fr) {
   &fr; // expected-error {{cannot take address of WebAssembly reference}}
 }
 
+// Pointers to externref behave like ordinary pointers in unary and binary
+// expressions (unlike tables, which are rejected below in func()).
+int pointer_exprs(__externref_t *p, __externref_t *q) {
+  if (!p)
+    return 0;
+  if (p == 0 || q != 0)
+    return 1;
+  if (p == q || p != q || p < q || p >= q)
+    return 2;
+  if (p && q)
+    return 3;
+  return p ? 4 : 5;
+}
+
 __externref_t func(__externref_t ref) {
   &ref;
   int foo = 40;

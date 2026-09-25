@@ -12972,12 +12972,6 @@ QualType Sema::CheckCompareOperands(ExprResult &LHS, ExprResult &RHS,
       (RHSType->isArithmeticType() || RHSType->isEnumeralType()))
     return checkArithmeticOrEnumeralCompare(*this, LHS, RHS, Loc, Opc);
 
-  if ((LHSType->isPointerType() &&
-       LHSType->getPointeeType().isWebAssemblyReferenceType()) ||
-      (RHSType->isPointerType() &&
-       RHSType->getPointeeType().isWebAssemblyReferenceType()))
-    return InvalidOperands(Loc, LHS, RHS);
-
   const Expr::NullPointerConstantKind LHSNullKind =
       LHS.get()->isNullPointerConstant(Context, Expr::NPC_ValueDependentIsNull);
   const Expr::NullPointerConstantKind RHSNullKind =
@@ -16345,13 +16339,6 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
         Input = ImpCastExprToType(Input.get(), Context.FloatTy, CK_FloatingCast)
                     .get();
         resultType = Context.FloatTy;
-      }
-
-      // WebAsembly tables can't be used in unary expressions.
-      if (resultType->isPointerType() &&
-          resultType->getPointeeType().isWebAssemblyReferenceType()) {
-        return ExprError(Diag(OpLoc, diag::err_typecheck_unary_expr)
-                         << resultType << Input.get()->getSourceRange());
       }
 
       if (resultType->isScalarType() && !isScopedEnumerationType(resultType)) {
