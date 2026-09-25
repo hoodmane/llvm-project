@@ -3,14 +3,15 @@
 # RUN: obj2yaml %t.wasm | FileCheck %s
 
 # Verify the --export-externref-table flag creates and exports the default
-# externref table, even when no input references it.
+# externref table, even when no input references it.  Slot 0 is always reserved
+# as the null externref, so the minimum size is 1.
 
 # CHECK:        - Type:            TABLE
 # CHECK-NEXT:     Tables:
 # CHECK-NEXT:       - Index:           0
 # CHECK-NEXT:         ElemType:        EXTERNREF
 # CHECK-NEXT:         Limits:
-# CHECK-NEXT:           Minimum:         0x0
+# CHECK-NEXT:           Minimum:         0x1
 # CHECK:        - Type:            EXPORT
 # CHECK-NEXT:     Exports:
 # CHECK:            - Name:            __externref_table

@@ -1,7 +1,8 @@
 # RUN: llvm-mc -filetype=obj -triple=wasm32-unknown-unknown -mattr=+reference-types %s -o %t.o
 
 ## A reference to the reserved __externref_table symbol causes the linker to
-## synthesize a defined externref table.
+## synthesize a defined externref table.  Executables always reserve slot 0 as
+## the null externref, so the minimum size is 1 even with no other slots.
 # RUN: wasm-ld --no-entry --export=_start -o %t.wasm %t.o
 # RUN: obj2yaml %t.wasm | FileCheck %s --check-prefix=DEFINED
 
@@ -28,7 +29,7 @@ _start:
 # DEFINED-NEXT:     - Index:           0
 # DEFINED-NEXT:       ElemType:        EXTERNREF
 # DEFINED-NEXT:       Limits:
-# DEFINED-NEXT:         Minimum:         0x0
+# DEFINED-NEXT:         Minimum:         0x1
 
 # IMPORT:      - Type:            IMPORT
 # IMPORT-NEXT:   Imports:
@@ -39,6 +40,6 @@ _start:
 # IMPORT-NEXT:         Index:           0
 # IMPORT-NEXT:         ElemType:        EXTERNREF
 # IMPORT-NEXT:         Limits:
-# IMPORT-NEXT:           Minimum:         0x0
+# IMPORT-NEXT:           Minimum:         0x1
 
 # ERROR: error: --import-externref-table and --export-externref-table may not be used together

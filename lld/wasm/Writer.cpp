@@ -989,14 +989,16 @@ static void finalizeIndirectFunctionTable() {
 //  - stack : reserved externref spill stack, [B, B + S)
 //  - heap  : grows at runtime via table.grow, [B + S, ...)
 //
-// When any symbol slots are allocated (N > 0, for symbols targeted by
-// R_WASM_EXTERNREF_TABLE_INDEX_LEB relocations) slot 0 is reserved as the
-// canonical null externref and the N symbol slots occupy [1, N + 1), so the bss
-// region size is B = N + 1.  When no symbols are allocated there is no reserved
-// slot (B = 0), so direct uses of __externref_table and stack-only layouts keep
-// slot 0 for themselves.  The marker globals hold slot indices (not
-// linear-memory addresses).  The externref table is always i32-indexed, even
-// under wasm64, so the marker globals are always i32.
+// In an executable slot 0 is always reserved as the canonical null externref
+// (ctx.arg.externrefTableBase == 1), even when no symbol slots are allocated
+// and the spill stack is empty, so that a slot index of 0 is never a valid
+// `__externref_t *` and can serve as the null pointer.  The N symbol slots (for
+// symbols targeted by R_WASM_EXTERNREF_TABLE_INDEX_LEB relocations) follow it,
+// so the bss region size is B = 1 + N.  Under PIC externrefTableBase is 0 and
+// the loader-managed __externref_table_base takes over that role.  The marker
+// globals hold slot indices (not linear-memory addresses).  The externref
+// table is always i32-indexed, even under wasm64, so the marker globals are
+// always i32.
 static void finalizeExternrefTable() {
   if (ctx.arg.relocatable)
     return;
@@ -1006,16 +1008,16 @@ static void finalizeExternrefTable() {
       setGlobalPtr(d, value);
   };
 
-  // The bss region holds the statically-allocated global externref slots, one
-  // per symbol that was the target of an R_WASM_EXTERNREF_TABLE_INDEX_LEB /
+  // The bss region holds the ctx.arg.externrefTableBase reserved slots (1 for
+  // executables, reserving the null externref at index 0; 0 under PIC) followed
+  // by the statically-allocated global externref slots, one per symbol that was
+  // the target of an R_WASM_EXTERNREF_TABLE_INDEX_LEB /
   // R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB relocation (assigned during
-  // scanRelocations).  When it is non-empty it is prefixed by the
-  // ctx.arg.externrefTableBase reserved slots (1 for executables, reserving the
-  // null externref at index 0), so it occupies [0, externrefTableBase + N);
-  // otherwise it is empty.  (The boundary globals only exist in non-PIC links;
-  // under PIC the table is loader-managed and these are no-ops.)
+  // scanRelocations), so it occupies [0, externrefTableBase + N).  (The
+  // boundary globals only exist in non-PIC links; under PIC the table is
+  // loader-managed and these are no-ops.)
   uint32_t numSlots = out.externrefElemSec->numEntries();
-  uint64_t index = numSlots ? ctx.arg.externrefTableBase + numSlots : 0;
+  uint64_t index = ctx.arg.externrefTableBase + numSlots;
   setIndex(ctx.sym.externrefDataEnd, index);
 
   // Report the statically-allocated global externref slots to the dynamic

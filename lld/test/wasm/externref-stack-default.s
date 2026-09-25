@@ -5,7 +5,8 @@
 ## __externref_stack_pointer.  This object references the other region boundary
 ## globals (here __externref_heap_base) but NOT the stack pointer, so no spill
 ## stack is needed: an externref table is still synthesized (the heap region is
-## in use) but its stack region stays empty and its minimum size is 0.
+## in use) but its stack region stays empty, so its minimum size is just the
+## always-reserved null slot 0 (1).
 # RUN: wasm-ld --extra-features=reference-types --no-entry --export=_start \
 # RUN:     -o %t.wasm %t.o
 # RUN: obj2yaml %t.wasm | FileCheck %s
@@ -24,4 +25,4 @@ _start:
 # CHECK-NEXT:     - Index:           0
 # CHECK-NEXT:       ElemType:        EXTERNREF
 # CHECK-NEXT:       Limits:
-# CHECK-NEXT:         Minimum:         0x0
+# CHECK-NEXT:         Minimum:         0x1

@@ -3,14 +3,16 @@
 ## The externref region boundary globals are only provided when the
 ## reference-types feature is enabled (here via --extra-features).  Referencing
 ## them causes the linker to synthesize the __externref_table and lay it out
-## into bss / stack / heap regions.  With -z externref-stack-size=16 and no bss
-## slots.  Mirroring the linear-memory __stack_pointer, the
-## externref stack pointer starts at the high end of the stack region and grows
-## downward:
-##   data_end   = 0
-##   stack_low  = 0,  stack_high = 16,  stack_pointer = 16
-##   heap_base  = 16
-## and the table's minimum size is N + S = 16.
+## into bss / stack / heap regions.  Slot 0 is always reserved as the null
+## externref in an executable (so index 0 is never a valid `__externref_t *`),
+## even with no global externref symbols, so the bss region is [0, 1).  With
+## -z externref-stack-size=16 and mirroring the linear-memory __stack_pointer,
+## the externref stack pointer starts at the high end of the stack region and
+## grows downward:
+##   data_end   = 1
+##   stack_low  = 1,  stack_high = 17,  stack_pointer = 17
+##   heap_base  = 17
+## and the table's minimum size is 1 + N + S = 17.
 # RUN: wasm-ld --extra-features=reference-types --no-entry --export=_start \
 # RUN:     -z externref-stack-size=16 -o %t.wasm %t.o
 # RUN: obj2yaml %t.wasm | FileCheck %s
@@ -20,16 +22,17 @@
 ## a real spill stack, so the linker reserves a positive default (1024 slots)
 ## rather than an empty region that would trap.  The stack pointer starts at the
 ## high end and grows down:
-##   data_end   = 0
-##   stack_low  = 0,  stack_high = 1024,  stack_pointer = 1024
-##   heap_base  = 1024
-## and the table's minimum size is the default 1024 (0x400).
+##   data_end   = 1
+##   stack_low  = 1,  stack_high = 1025,  stack_pointer = 1025
+##   heap_base  = 1025
+## and the table's minimum size is 1 + the default 1024 (0x401).
 # RUN: wasm-ld --extra-features=reference-types --no-entry --export=_start \
 # RUN:     -o %t.default.wasm %t.o
 # RUN: obj2yaml %t.default.wasm | FileCheck %s --check-prefix=DEFAULT
 
 ## An explicit -z externref-stack-size=0 opts back out of the default and leaves
-## the stack region empty (table minimum size 0).
+## the stack region empty; only the reserved null slot remains (table minimum
+## size 1).
 # RUN: wasm-ld --extra-features=reference-types --no-entry --export=_start \
 # RUN:     -z externref-stack-size=0 -o %t.nostack.wasm %t.o
 # RUN: obj2yaml %t.nostack.wasm | FileCheck %s --check-prefix=NOSTACK
@@ -78,7 +81,7 @@ _start:
 # CHECK-NEXT:       - Index:           0
 # CHECK-NEXT:         ElemType:        EXTERNREF
 # CHECK-NEXT:         Limits:
-# CHECK-NEXT:           Minimum:         0x10
+# CHECK-NEXT:           Minimum:         0x11
 # CHECK:        - Type:            GLOBAL
 # CHECK-NEXT:     Globals:
 # CHECK-NEXT:       - Index:           0
@@ -86,31 +89,31 @@ _start:
 # CHECK-NEXT:         Mutable:         false
 # CHECK-NEXT:         InitExpr:
 # CHECK-NEXT:           Opcode:          I32_CONST
-# CHECK-NEXT:           Value:           0
+# CHECK-NEXT:           Value:           1
 # CHECK-NEXT:       - Index:           1
 # CHECK-NEXT:         Type:            I32
 # CHECK-NEXT:         Mutable:         false
 # CHECK-NEXT:         InitExpr:
 # CHECK-NEXT:           Opcode:          I32_CONST
-# CHECK-NEXT:           Value:           0
+# CHECK-NEXT:           Value:           1
 # CHECK-NEXT:       - Index:           2
 # CHECK-NEXT:         Type:            I32
 # CHECK-NEXT:         Mutable:         false
 # CHECK-NEXT:         InitExpr:
 # CHECK-NEXT:           Opcode:          I32_CONST
-# CHECK-NEXT:           Value:           16
+# CHECK-NEXT:           Value:           17
 # CHECK-NEXT:       - Index:           3
 # CHECK-NEXT:         Type:            I32
 # CHECK-NEXT:         Mutable:         true
 # CHECK-NEXT:         InitExpr:
 # CHECK-NEXT:           Opcode:          I32_CONST
-# CHECK-NEXT:           Value:           16
+# CHECK-NEXT:           Value:           17
 # CHECK-NEXT:       - Index:           4
 # CHECK-NEXT:         Type:            I32
 # CHECK-NEXT:         Mutable:         false
 # CHECK-NEXT:         InitExpr:
 # CHECK-NEXT:           Opcode:          I32_CONST
-# CHECK-NEXT:           Value:           16
+# CHECK-NEXT:           Value:           17
 # CHECK:      GlobalNames:
 # CHECK-NEXT:   - Index:           0
 # CHECK-NEXT:     Name:            __externref_data_end
@@ -128,51 +131,51 @@ _start:
 # DEFAULT-NEXT:     - Index:           0
 # DEFAULT-NEXT:       ElemType:        EXTERNREF
 # DEFAULT-NEXT:       Limits:
-# DEFAULT-NEXT:         Minimum:         0x400
+# DEFAULT-NEXT:         Minimum:         0x401
 # DEFAULT:        - Type:            GLOBAL
 # DEFAULT-NEXT:     Globals:
-## __externref_data_end = 0
+## __externref_data_end = 1
 # DEFAULT-NEXT:       - Index:           0
 # DEFAULT-NEXT:         Type:            I32
 # DEFAULT-NEXT:         Mutable:         false
 # DEFAULT-NEXT:         InitExpr:
 # DEFAULT-NEXT:           Opcode:          I32_CONST
-# DEFAULT-NEXT:           Value:           0
-## __externref_stack_low = 0
+# DEFAULT-NEXT:           Value:           1
+## __externref_stack_low = 1
 # DEFAULT-NEXT:       - Index:           1
 # DEFAULT-NEXT:         Type:            I32
 # DEFAULT-NEXT:         Mutable:         false
 # DEFAULT-NEXT:         InitExpr:
 # DEFAULT-NEXT:           Opcode:          I32_CONST
-# DEFAULT-NEXT:           Value:           0
-## __externref_stack_high = 1024
+# DEFAULT-NEXT:           Value:           1
+## __externref_stack_high = 1025
 # DEFAULT-NEXT:       - Index:           2
 # DEFAULT-NEXT:         Type:            I32
 # DEFAULT-NEXT:         Mutable:         false
 # DEFAULT-NEXT:         InitExpr:
 # DEFAULT-NEXT:           Opcode:          I32_CONST
-# DEFAULT-NEXT:           Value:           1024
-## __externref_stack_pointer = 1024 (mutable, grows down)
+# DEFAULT-NEXT:           Value:           1025
+## __externref_stack_pointer = 1025 (mutable, grows down)
 # DEFAULT-NEXT:       - Index:           3
 # DEFAULT-NEXT:         Type:            I32
 # DEFAULT-NEXT:         Mutable:         true
 # DEFAULT-NEXT:         InitExpr:
 # DEFAULT-NEXT:           Opcode:          I32_CONST
-# DEFAULT-NEXT:           Value:           1024
-## __externref_heap_base = 1024
+# DEFAULT-NEXT:           Value:           1025
+## __externref_heap_base = 1025
 # DEFAULT-NEXT:       - Index:           4
 # DEFAULT-NEXT:         Type:            I32
 # DEFAULT-NEXT:         Mutable:         false
 # DEFAULT-NEXT:         InitExpr:
 # DEFAULT-NEXT:           Opcode:          I32_CONST
-# DEFAULT-NEXT:           Value:           1024
+# DEFAULT-NEXT:           Value:           1025
 
 # NOSTACK:      - Type:            TABLE
 # NOSTACK-NEXT:   Tables:
 # NOSTACK-NEXT:     - Index:           0
 # NOSTACK-NEXT:       ElemType:        EXTERNREF
 # NOSTACK-NEXT:       Limits:
-# NOSTACK-NEXT:         Minimum:         0x0
+# NOSTACK-NEXT:         Minimum:         0x1
 
 # NOREFTYPES: undefined symbol: __externref_data_end
 
@@ -183,7 +186,7 @@ _start:
 # WASM64-NEXT:     - Index:           0
 # WASM64-NEXT:       ElemType:        EXTERNREF
 # WASM64-NEXT:       Limits:
-# WASM64-NEXT:         Minimum:         0x10
+# WASM64-NEXT:         Minimum:         0x11
 # WASM64:      - Type:            GLOBAL
 # WASM64-NEXT:   Globals:
 # WASM64-NEXT:     - Index:           0
@@ -191,28 +194,28 @@ _start:
 # WASM64-NEXT:       Mutable:         false
 # WASM64-NEXT:       InitExpr:
 # WASM64-NEXT:         Opcode:          I32_CONST
-# WASM64-NEXT:         Value:           0
+# WASM64-NEXT:         Value:           1
 # WASM64-NEXT:     - Index:           1
 # WASM64-NEXT:       Type:            I32
 # WASM64-NEXT:       Mutable:         false
 # WASM64-NEXT:       InitExpr:
 # WASM64-NEXT:         Opcode:          I32_CONST
-# WASM64-NEXT:         Value:           0
+# WASM64-NEXT:         Value:           1
 # WASM64-NEXT:     - Index:           2
 # WASM64-NEXT:       Type:            I32
 # WASM64-NEXT:       Mutable:         false
 # WASM64-NEXT:       InitExpr:
 # WASM64-NEXT:         Opcode:          I32_CONST
-# WASM64-NEXT:         Value:           16
+# WASM64-NEXT:         Value:           17
 # WASM64-NEXT:     - Index:           3
 # WASM64-NEXT:       Type:            I32
 # WASM64-NEXT:       Mutable:         true
 # WASM64-NEXT:       InitExpr:
 # WASM64-NEXT:         Opcode:          I32_CONST
-# WASM64-NEXT:         Value:           16
+# WASM64-NEXT:         Value:           17
 # WASM64-NEXT:     - Index:           4
 # WASM64-NEXT:       Type:            I32
 # WASM64-NEXT:       Mutable:         false
 # WASM64-NEXT:       InitExpr:
 # WASM64-NEXT:         Opcode:          I32_CONST
-# WASM64-NEXT:         Value:           16
+# WASM64-NEXT:         Value:           17
