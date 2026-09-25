@@ -102,3 +102,25 @@ void pseudo_dtor(__externref_t *p, __externref_t &r) {
   destroy_at(p);
   p->externref_t::~externref_t();
 }
+
+// An externref cannot be copied bytewise (copying is table.get / table.set,
+// never memcpy), so it is not trivially copyable / constructible / assignable
+// / relocatable; this keeps libraries from relocating externrefs with memcpy.
+// It remains (non-trivially) copyable and trivially destructible.
+static_assert(!__is_trivially_copyable(__externref_t), "");
+static_assert(!__is_trivially_copyable(__externref_t[4]), "");
+static_assert(!__is_trivial(__externref_t), "");
+static_assert(!__is_pod(__externref_t), "");
+static_assert(!__is_trivially_constructible(__externref_t, const __externref_t &), "");
+static_assert(!__is_trivially_constructible(__externref_t, __externref_t &&), "");
+static_assert(!__is_trivially_assignable(__externref_t &, const __externref_t &), "");
+static_assert(!__is_trivially_assignable(__externref_t &, __externref_t &&), "");
+static_assert(!__builtin_is_cpp_trivially_relocatable(__externref_t), "");
+static_assert(!__is_bitwise_cloneable(__externref_t), "");
+static_assert(__is_constructible(__externref_t, const __externref_t &), "");
+static_assert(__is_assignable(__externref_t &, const __externref_t &), "");
+static_assert(__is_trivially_destructible(__externref_t), "");
+static_assert(__is_nothrow_constructible(__externref_t, __externref_t), "");
+// Pointers to externref are ordinary linear-memory pointers.
+static_assert(__is_trivially_copyable(__externref_t *), "");
+static_assert(__is_trivially_copyable(__externref_t (*)[3]), "");

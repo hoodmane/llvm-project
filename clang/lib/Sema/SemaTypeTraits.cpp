@@ -621,6 +621,10 @@ static bool IsTriviallyRelocatableType(Sema &SemaRef, QualType T) {
   if (BaseElementType.isTriviallyCopyableType(SemaRef.getASTContext()))
     return true;
 
+  // A WebAssembly reference cannot be relocated with memcpy.
+  if (BaseElementType.isWebAssemblyReferenceType())
+    return false;
+
   switch (T.isNonTrivialToPrimitiveDestructiveMove()) {
   case QualType::PCK_Trivial:
     return !T.isDestructedType();
@@ -1392,6 +1396,12 @@ static bool EvaluateBooleanTypeTrait(Sema &S, TypeTrait Kind,
       if (T.getNonReferenceType().hasNonTrivialObjCLifetime())
         return false;
 
+      // Likewise, constructing a WebAssembly reference is never a bytewise
+      // copy (it is a table.get / table.set), so it is not trivial.
+      if (S.Context.getBaseElementType(T.getNonReferenceType())
+              .isWebAssemblyReferenceType())
+        return false;
+
       // The initialization succeeded; now make sure there are no non-trivial
       // calls.
       return !Result.get()->hasNonTrivialCall(S.Context);
@@ -1714,6 +1724,12 @@ static bool EvaluateBinaryTypeTrait(Sema &Self, TypeTrait BTT,
       // Under Objective-C ARC and Weak, if the destination has non-trivial
       // Objective-C lifetime, this is a non-trivial assignment.
       if (LhsT.getNonReferenceType().hasNonTrivialObjCLifetime())
+        return false;
+
+      // Likewise, assigning a WebAssembly reference is never a bytewise copy
+      // (it is a table.get / table.set), so it is not trivial.
+      if (Self.Context.getBaseElementType(LhsT.getNonReferenceType())
+              .isWebAssemblyReferenceType())
         return false;
       const ASTContext &Context = Self.getASTContext();
       if (Context.containsAddressDiscriminatedPointerAuth(LhsT) ||

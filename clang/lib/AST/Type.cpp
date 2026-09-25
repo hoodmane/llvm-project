@@ -2857,6 +2857,11 @@ bool QualType::isTrivialType(const ASTContext &Context) const {
   if ((*this)->isArrayType())
     return Context.getBaseElementType(*this).isTrivialType(Context);
 
+  // WebAssembly references are not trivially copyable (see
+  // isTriviallyCopyableTypeImpl), hence not trivial.
+  if (isWebAssemblyReferenceType())
+    return false;
+
   if ((*this)->isSizelessBuiltinType())
     return true;
 
@@ -2924,6 +2929,13 @@ static bool isTriviallyCopyableTypeImpl(const QualType &type,
   if (CanonicalType->isDependentType())
     return false;
 
+  // A WebAssembly reference cannot be copied bytewise: a pointer to one is an
+  // externref table slot index, so copying the object means table.get /
+  // table.set, never memcpy. Report it as not trivially copyable so that
+  // libraries fall back to element-wise copies.
+  if (CanonicalType.isWebAssemblyReferenceType())
+    return false;
+
   if (CanonicalType->isSizelessBuiltinType())
     return true;
 
@@ -2977,6 +2989,10 @@ bool QualType::isBitwiseCloneableType(const ASTContext &Context) const {
   // Any type that is, or contains, address discriminated data is never
   // bitwise clonable.
   if (Context.containsAddressDiscriminatedPointerAuth(CanonicalType))
+    return false;
+
+  // WebAssembly references live in the externref table, not in bytes.
+  if (CanonicalType.isWebAssemblyReferenceType())
     return false;
 
   const auto *RD = CanonicalType->getAsRecordDecl(); // struct/union/class
@@ -3242,6 +3258,10 @@ bool QualType::isCXX11PODType(const ASTContext &Context) const {
   //   versions of these types are collectively called trivial types.
   const Type *BaseTy = ty->getBaseElementTypeUnsafe();
   assert(BaseTy && "NULL element type");
+
+  // WebAssembly references are not trivial (see isTrivialType), hence not POD.
+  if (QualType(BaseTy, 0).isWebAssemblyReferenceType())
+    return false;
 
   if (BaseTy->isSizelessBuiltinType())
     return true;
