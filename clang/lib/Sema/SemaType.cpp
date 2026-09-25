@@ -1953,9 +1953,10 @@ QualType Sema::BuildReferenceType(QualType T, bool SpelledAsLValue,
   if (getLangOpts().OpenCL)
     T = deduceOpenCLPointeeAddrSpace(*this, T);
 
-  // In WebAssembly, references to reference types and tables are illegal.
+  // In WebAssembly, references to funcrefs and references to tables are
+  // illegal. References to externrefs are permitted, matching pointers.
   if (getASTContext().getTargetInfo().getTriple().isWasm() &&
-      T.isWebAssemblyReferenceType()) {
+      T.isWebAssemblyFuncrefType()) {
     Diag(Loc, diag::err_wasm_reference_pr) << 1;
     return QualType();
   }
