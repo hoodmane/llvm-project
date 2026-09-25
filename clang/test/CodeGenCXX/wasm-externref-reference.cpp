@@ -8,6 +8,10 @@
 
 void helper(__externref_t);
 
+// The closure of a lambda capturing an externref by reference (see
+// capture_by_ref below) holds a pointer to the slot.
+// CHECK: %class.anon = type { ptr }
+
 // Reading through an lvalue reference.
 // CHECK-LABEL: define{{.*}} void @_Z4readRu11externref_t(ptr {{[^,]*}} %r)
 // CHECK:         [[R_ADDR:%.*]] = alloca ptr
@@ -55,3 +59,20 @@ void caller() {
   write(local, ref);
   helper(identity(local));
 }
+
+// A lambda capturing an externref by reference holds an __externref_t& (a
+// ptr to the slot) in its closure and reads the value through it.
+// CHECK-LABEL: define{{.*}} void @_Z14capture_by_refu11externref_t(target("wasm.externref") %v)
+// CHECK:         [[V_ADDR:%.*]] = alloca target("wasm.externref"), align 1
+// CHECK:         [[CLOSURE:%.*]] = alloca %class.anon
+// CHECK:         [[FIELD:%.*]] = getelementptr inbounds nuw %class.anon, ptr [[CLOSURE]], i32 0, i32 0
+// CHECK:         store ptr [[V_ADDR]], ptr [[FIELD]]
+// CHECK:         call void @"_ZZ14capture_by_refu11externref_tENK3$_0clEv"(ptr {{.*}} [[CLOSURE]])
+void capture_by_ref(__externref_t v) {
+  [&] { helper(v); }();
+}
+// CHECK-LABEL: define internal void @"_ZZ14capture_by_refu11externref_tENK3$_0clEv"(ptr {{.*}} %this)
+// CHECK:         [[F:%.*]] = getelementptr inbounds nuw %class.anon, ptr %{{.*}}, i32 0, i32 0
+// CHECK:         [[REF:%.*]] = load ptr, ptr [[F]]
+// CHECK:         [[VAL:%.*]] = load target("wasm.externref"), ptr [[REF]], align 1
+// CHECK:         call void @_Z6helperu11externref_t(target("wasm.externref") [[VAL]])

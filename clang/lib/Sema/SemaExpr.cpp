@@ -19586,10 +19586,19 @@ static bool captureInLambda(LambdaScopeInfo *LSI, ValueDecl *Var,
     ByRef = (LSI->ImpCaptureStyle == LambdaScopeInfo::ImpCap_LambdaByref);
   }
 
-  if (BuildAndDiagnose && S.Context.getTargetInfo().getTriple().isWasm() &&
-      CaptureType.getNonReferenceType().isWebAssemblyReferenceType()) {
-    S.Diag(Loc, diag::err_wasm_ca_reference) << 0;
-    Invalid = true;
+  // A WebAssembly reference cannot be captured by value: the closure would
+  // need an externref field, and reference types cannot live in linear
+  // memory. Capturing an externref by reference is fine, though: the closure
+  // then holds an __externref_t&, i.e. an externref table slot index.
+  // (Funcrefs cannot be pointed to at all, so they cannot be captured by
+  // reference either.)
+  if (BuildAndDiagnose && S.Context.getTargetInfo().getTriple().isWasm()) {
+    QualType Captured = CaptureType.getNonReferenceType();
+    if (Captured.isWebAssemblyFuncrefType() ||
+        (!ByRef && Captured.isWebAssemblyReferenceType())) {
+      S.Diag(Loc, diag::err_wasm_ca_reference) << 0;
+      Invalid = true;
+    }
   }
 
   // Compute the type of the field that will capture this variable.

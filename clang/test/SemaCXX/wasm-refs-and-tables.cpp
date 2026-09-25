@@ -53,3 +53,22 @@ void new_delete(__externref_t v, int n) {
   new __externref_t *;         // pointers to externref live in linear memory as usual
   delete static_cast<__externref_t **>(nullptr);
 }
+
+// Lambdas may capture an externref by reference (the closure then holds an
+// __externref_t&, i.e. a table slot index) but not by value (that would need
+// an externref field in the closure, which cannot live in linear memory).
+void use(__externref_t);
+void lambda_captures(__externref_t v, __externref_t &vr) {
+  [&] { use(v); }();
+  [&v] { use(v); }();
+  [&] { use(vr); }();
+  [&vr, &v] { vr = v; }();
+  [&v]() -> __externref_t & { return v; }();
+  [=] { use(v); }();  // expected-error {{cannot capture WebAssembly reference}}
+  [v] { use(v); }();  // expected-error {{cannot capture WebAssembly reference}}
+  [vr] { use(vr); }(); // expected-error {{cannot capture WebAssembly reference}}
+#if __cplusplus >= 201402L
+  [x = v] { use(x); }(); // expected-error {{field has sizeless type '__externref_t'}}
+  [&x = v] { use(x); }();
+#endif
+}
