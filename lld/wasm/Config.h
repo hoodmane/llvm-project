@@ -285,9 +285,10 @@ struct Ctx {
 
     // Boundary markers for the regions of the __externref_table, the
     // table-index-space analogs of __data_end / __stack_low / __stack_high /
-    // __heap_base.  These are immutable globals holding slot
-    // indices (i32, or i64 under wasm64).  __externref_stack_pointer is the
-    // mutable stack pointer for the externref spill stack.
+    // __heap_base.  These are immutable globals holding slot indices; the
+    // externref table is i32-indexed even under wasm64, so they are always
+    // i32.  __externref_stack_pointer is the mutable stack pointer for the
+    // externref spill stack.
     GlobalSymbol *externrefDataEnd;
     GlobalSymbol *externrefStackLow;
     GlobalSymbol *externrefStackHigh;

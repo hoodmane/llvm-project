@@ -995,8 +995,8 @@ static void finalizeIndirectFunctionTable() {
 // region size is B = N + 1.  When no symbols are allocated there is no reserved
 // slot (B = 0), so direct uses of __externref_table and stack-only layouts keep
 // slot 0 for themselves.  The marker globals hold slot indices (not
-// linear-memory addresses); like other index/pointer globals they are i32, or
-// i64 under wasm64.
+// linear-memory addresses).  The externref table is always i32-indexed, even
+// under wasm64, so the marker globals are always i32.
 static void finalizeExternrefTable() {
   if (ctx.arg.relocatable)
     return;
@@ -1044,9 +1044,10 @@ static void finalizeExternrefTable() {
 
   // The minimum size covers the bss and stack regions; the heap region grows
   // at runtime, so the externref table is always left growable (no maximum).
-  WasmLimits limits = {0, index, 0, 0};
-  if (ctx.arg.is64.value_or(false))
-    limits.Flags |= WASM_LIMITS_FLAG_IS_64;
+  // The table is i32-indexed regardless of --is64 (see createExternrefTable).
+  if (index > UINT32_MAX)
+    error("__externref_table layout exceeds 32-bit slot index space");
+  WasmLimits limits = {WASM_LIMITS_FLAG_NONE, index, 0, 0};
   ctx.sym.externrefTable->setLimits(limits);
 }
 

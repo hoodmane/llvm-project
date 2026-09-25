@@ -3,8 +3,10 @@
 
 ; Under PIC the slot index is computed relative to __externref_table_base (see
 ; externref-global.ll); an array-element offset is added on top of that base.
+; The externref table is i32-indexed even under wasm64, so the PIC output is
+; identical for wasm32 and wasm64.
 ; RUN: llc < %s --mtriple=wasm32-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC
-; RUN: llc < %s --mtriple=wasm64-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC,PIC64
+; RUN: llc < %s --mtriple=wasm64-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC
 
 ; An array of externref (including a multi-dimensional one) must be flagged as an
 ; externref data symbol so the linker gives it __externref_table semantics rather
@@ -45,7 +47,6 @@ define %externref @get_const() {
 ; PIC-LABEL:    get_const:
 ; PIC-NEXT:     .functype       get_const () -> (externref)
 ; PIC-NEXT:     global.get      __externref_table_base
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     i32.const       c@EXTERNREF_TABLE_INDEX_REL
 ; PIC-NEXT:     i32.add
 ; PIC-NEXT:     i32.const       3
@@ -57,7 +58,8 @@ define %externref @get_const() {
 }
 
 ; A dynamic index is added to the base slot. (An i32 index needs no widening on
-; wasm64: the address-arithmetic zext folds against the slot-index truncation.)
+; wasm64: the pointer-arithmetic zext folds against the i32 slot-index
+; truncation, since the externref table is always i32-indexed.)
 define %externref @get_dynamic(i32 %i) {
 ; CHECK-LABEL: get_dynamic:
 ; CHECK-NEXT:  .functype       get_dynamic (i32) -> (externref)
@@ -70,7 +72,6 @@ define %externref @get_dynamic(i32 %i) {
 ; PIC-LABEL:    get_dynamic:
 ; PIC-NEXT:     .functype       get_dynamic (i32) -> (externref)
 ; PIC-NEXT:     global.get      __externref_table_base
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     i32.const       c@EXTERNREF_TABLE_INDEX_REL
 ; PIC-NEXT:     i32.add
 ; PIC-NEXT:     local.get       0

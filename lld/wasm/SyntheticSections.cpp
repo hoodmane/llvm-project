@@ -318,14 +318,16 @@ void ImportSection::writeBody() {
     import.Kind = WASM_EXTERNAL_GLOBAL;
     auto ptrType = is64 ? WASM_TYPE_I64 : WASM_TYPE_I32;
     import.Global = {static_cast<uint8_t>(ptrType), true};
-    if (sym->isExternref())
+    if (sym->isExternref()) {
       // A global externref variable's GOT entry holds its slot index in the
       // shared __externref_table, not a linear-memory address (GOT.mem) or a
       // function table index (GOT.func).  The dynamic linker resolves it to the
       // symbol's __externref_table_base-relative slot.  This is the externref
-      // analog of GOT.func.
+      // analog of GOT.func.  The externref table is i32-indexed even under
+      // wasm64, so the GOT entry is always i32.
       import.Module = "GOT.externref";
-    else if (isa<DataSymbol>(sym))
+      import.Global.Type = WASM_TYPE_I32;
+    } else if (isa<DataSymbol>(sym))
       import.Module = "GOT.mem";
     else
       import.Module = "GOT.func";
@@ -534,11 +536,18 @@ void GlobalSection::generateRelocationCode(raw_ostream &os, bool TLS) const {
     if (auto *d = dyn_cast<DefinedData>(sym)) {
       if (sym->isExternref()) {
         // Get __externref_table_base and add the symbol's slot index, the
-        // externref analog of the __table_base + table-index case below.
+        // externref analog of the __table_base + table-index case below.  The
+        // externref table is i32-indexed even under wasm64, so the base
+        // global, the offset and the GOT entry are all i32.
         writeU8(os, WASM_OPCODE_GLOBAL_GET, "GLOBAL_GET");
         writeUleb128(os, ctx.sym.externrefTableBase->getGlobalIndex(),
                      "__externref_table_base");
-        writePtrConst(os, d->getExternrefTableIndex(), is64, "offset");
+        writePtrConst(os, d->getExternrefTableIndex(), /*is64=*/false,
+                      "offset");
+        writeU8(os, WASM_OPCODE_I32_ADD, "ADD");
+        writeU8(os, WASM_OPCODE_GLOBAL_SET, "GLOBAL_SET");
+        writeUleb128(os, sym->getGOTIndex(), "got_entry");
+        continue;
       } else {
         // Get __memory_base
         if (sym->isTLS())
@@ -594,7 +603,10 @@ void GlobalSection::writeBody() {
       if (ctx.arg.isMultithreaded() && sym->isTLS())
         mutable_ = true;
     }
-    WasmGlobalType type{itype, mutable_};
+    // Externref GOT entries hold i32 __externref_table slot indices even
+    // under wasm64.
+    uint8_t gotType = sym->isExternref() ? WASM_TYPE_I32 : itype;
+    WasmGlobalType type{gotType, mutable_};
     writeGlobalType(os, type);
 
     bool useExtendedConst = false;
@@ -633,7 +645,7 @@ void GlobalSection::writeBody() {
           // index, not a memory address.  Under PIC this is fixed up to
           // __externref_table_base + slot at load time (generateRelocationCode),
           // but in a non-PIC link the slot is an absolute constant.
-          initExpr = intConst(d->getExternrefTableIndex(), is64);
+          initExpr = intConst(d->getExternrefTableIndex(), /*is64=*/false);
         else
           // In the multithreaded case, TLS globals are set during
           // `__wasm_apply_global_tls_relocs`, but in the single-threaded case
@@ -650,15 +662,19 @@ void GlobalSection::writeBody() {
     }
   }
   for (const DefinedData *sym : dataAddressGlobals) {
-    WasmGlobalType type{itype, false};
-    writeGlobalType(os, type);
-    if (sym->isExternref())
+    if (sym->isExternref()) {
       // An exported global externref's address is its __externref_table slot
       // index (relative to __externref_table_base under PIC), not a
-      // linear-memory address.  Mirror the GOT-entry handling above.
-      writeInitExpr(os, intConst(sym->getExternrefTableIndex(), is64));
-    else
+      // linear-memory address.  Mirror the GOT-entry handling above; the
+      // table is i32-indexed even under wasm64.
+      WasmGlobalType type{WASM_TYPE_I32, false};
+      writeGlobalType(os, type);
+      writeInitExpr(os, intConst(sym->getExternrefTableIndex(), /*is64=*/false));
+    } else {
+      WasmGlobalType type{itype, false};
+      writeGlobalType(os, type);
       writeInitExpr(os, intConst(sym->getVA(), is64));
+    }
   }
 }
 

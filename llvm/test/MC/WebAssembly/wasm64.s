@@ -6,6 +6,8 @@
 .globaltype myglob64, i64
 .globaltype __stack_pointer, i64
 
+# Externref tables are always i32-indexed, even under wasm64 (no IS_64 limits
+# flag below); only funcref tables follow the pointer width.
 .tabletype externref_table, externref
 externref_table:
 
@@ -170,7 +172,6 @@ test:
 # BIN-NEXT:        - Index:           0
 # BIN-NEXT:          ElemType:        EXTERNREF
 # BIN-NEXT:          Limits:
-# BIN-NEXT:            Flags:           [ IS_64 ]
 # BIN-NEXT:            Minimum:         0x0
 # BIN-NEXT:   - Type:            DATACOUNT
 # BIN-NEXT:     Count:           1

@@ -44,8 +44,9 @@
 # RUN: not wasm-ld --no-entry --export=_start -z externref-stack-size=16 \
 # RUN:     -o /dev/null %t.o 2>&1 | FileCheck %s --check-prefix=NOSTACKREFTYPES
 
-## Under wasm64 the externref table is i64-indexed and the boundary globals
-## are i64, mirroring the indirect function table.
+## The externref table is i32-indexed and the boundary globals are i32 even
+## under wasm64 (unlike the indirect function table, which follows the pointer
+## width): an `__externref_t *` always holds a 32-bit slot index.
 # RUN: llvm-mc -filetype=obj -triple=wasm64-unknown-unknown -mattr=+reference-types %s -o %t.64.o
 # RUN: wasm-ld -mwasm64 --extra-features=reference-types --no-entry \
 # RUN:     --export=_start -z externref-stack-size=16 -o %t.64.wasm %t.64.o
@@ -182,9 +183,36 @@ _start:
 # WASM64-NEXT:     - Index:           0
 # WASM64-NEXT:       ElemType:        EXTERNREF
 # WASM64-NEXT:       Limits:
-# WASM64-NEXT:         Flags:           [ IS_64 ]
 # WASM64-NEXT:         Minimum:         0x10
 # WASM64:      - Type:            GLOBAL
 # WASM64-NEXT:   Globals:
 # WASM64-NEXT:     - Index:           0
-# WASM64-NEXT:       Type:            I64
+# WASM64-NEXT:       Type:            I32
+# WASM64-NEXT:       Mutable:         false
+# WASM64-NEXT:       InitExpr:
+# WASM64-NEXT:         Opcode:          I32_CONST
+# WASM64-NEXT:         Value:           0
+# WASM64-NEXT:     - Index:           1
+# WASM64-NEXT:       Type:            I32
+# WASM64-NEXT:       Mutable:         false
+# WASM64-NEXT:       InitExpr:
+# WASM64-NEXT:         Opcode:          I32_CONST
+# WASM64-NEXT:         Value:           0
+# WASM64-NEXT:     - Index:           2
+# WASM64-NEXT:       Type:            I32
+# WASM64-NEXT:       Mutable:         false
+# WASM64-NEXT:       InitExpr:
+# WASM64-NEXT:         Opcode:          I32_CONST
+# WASM64-NEXT:         Value:           16
+# WASM64-NEXT:     - Index:           3
+# WASM64-NEXT:       Type:            I32
+# WASM64-NEXT:       Mutable:         true
+# WASM64-NEXT:       InitExpr:
+# WASM64-NEXT:         Opcode:          I32_CONST
+# WASM64-NEXT:         Value:           16
+# WASM64-NEXT:     - Index:           4
+# WASM64-NEXT:       Type:            I32
+# WASM64-NEXT:       Mutable:         false
+# WASM64-NEXT:       InitExpr:
+# WASM64-NEXT:         Opcode:          I32_CONST
+# WASM64-NEXT:         Value:           16

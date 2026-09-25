@@ -440,12 +440,6 @@ def : Pat<(i64 (WebAssemblyWrapper tglobaladdr:$addr)),
 // real wasm64 global address would be i64-typed, there is no other source of an
 // i32 global-address Wrapper to disambiguate against, so materialize it as a
 // CONST_I32.
-//
-// This covers the non-PIC case. Under PIC the externref table slot index is
-// computed at pointer width (i64 on wasm64) as `__externref_table_base + slot`
-// or loaded from a GOT global, and truncated to i32 afterwards (see
-// getExternrefTableSlotIndex), so it routes through the i64 Wrapper/WrapperREL
-// patterns below rather than this i32 one.
 def : Pat<(i32 (WebAssemblyWrapper tglobaladdr:$addr)),
           (CONST_I32 tglobaladdr:$addr)>, Requires<[IsNotPIC, HasAddr64]>;
 
@@ -453,6 +447,12 @@ def : Pat<(i32 (WebAssemblyWrapper tglobaladdr:$addr)),
           (GLOBAL_GET_I32 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr32]>;
 def : Pat<(i64 (WebAssemblyWrapper tglobaladdr:$addr)),
           (GLOBAL_GET_I64 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr64]>;
+// Likewise under PIC on wasm64: an i32-typed Wrapper of a global address is a
+// `sym@GOT` load of an externref symbol's __externref_table slot index. The
+// externref table is i32-indexed even under wasm64, so its GOT.externref
+// entries are i32 globals (see getExternrefTableSlotIndex).
+def : Pat<(i32 (WebAssemblyWrapper tglobaladdr:$addr)),
+          (GLOBAL_GET_I32 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr64]>;
 
 def : Pat<(i32 (WebAssemblyWrapperREL tglobaladdr:$addr)),
           (CONST_I32 tglobaladdr:$addr)>, Requires<[IsPIC, HasAddr32]>;
@@ -479,6 +479,11 @@ def : Pat<(i32 (WebAssemblyWrapper texternalsym:$addr)),
           (GLOBAL_GET_I32 texternalsym:$addr)>, Requires<[IsPIC, HasAddr32]>;
 def : Pat<(i64 (WebAssemblyWrapper texternalsym:$addr)),
           (GLOBAL_GET_I64 texternalsym:$addr)>, Requires<[IsPIC, HasAddr64]>;
+// On wasm64 an i32-typed Wrapper of an external symbol under PIC can only be
+// `__externref_table_base`, which is an i32 global regardless of pointer width
+// because the externref table is always i32-indexed.
+def : Pat<(i32 (WebAssemblyWrapper texternalsym:$addr)),
+          (GLOBAL_GET_I32 texternalsym:$addr)>, Requires<[IsPIC, HasAddr64]>;
 
 def : Pat<(i32 (WebAssemblyWrapper texternalsym:$addr)),
           (CONST_I32 texternalsym:$addr)>, Requires<[IsNotPIC, HasAddr32]>;

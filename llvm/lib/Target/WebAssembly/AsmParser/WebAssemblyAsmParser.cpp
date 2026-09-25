@@ -1078,7 +1078,12 @@ public:
       auto *WasmSym =
           static_cast<MCSymbolWasm *>(Ctx.getOrCreateSymbol(SymName));
       WasmSym->setType(wasm::WASM_SYMBOL_TYPE_TABLE);
-      if (Is64) {
+      // Function tables are indexed at pointer width (like
+      // __indirect_function_table), but externref tables are always
+      // i32-indexed even under wasm64: an `__externref_t *` holds a 32-bit
+      // slot index into the linker-synthesized __externref_table, and the
+      // table.* codegen indexes them with i32 regardless of pointer width.
+      if (Is64 && *ElemType != wasm::ValType::EXTERNREF) {
         Limits.Flags |= wasm::WASM_LIMITS_FLAG_IS_64;
       }
       wasm::WasmTableType Type = {*ElemType, Limits};

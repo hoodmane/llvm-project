@@ -132,11 +132,12 @@ public:
     return isTable() && hasTableType() &&
            getTableType().ElemType == wasm::ValType::EXTERNREF;
   }
-  void setExternRefTable(bool is64) {
+  // Externref tables are always i32-indexed, even under wasm64: an
+  // `__externref_t *` holds a 32-bit __externref_table slot index regardless
+  // of pointer width.
+  void setExternRefTable() {
     setType(wasm::WASM_SYMBOL_TYPE_TABLE);
-    uint8_t flags =
-        is64 ? wasm::WASM_LIMITS_FLAG_IS_64 : wasm::WASM_LIMITS_FLAG_NONE;
-    setTableType(wasm::ValType::EXTERNREF, flags);
+    setTableType(wasm::ValType::EXTERNREF, wasm::WASM_LIMITS_FLAG_NONE);
   }
 
   void setUsedInGOT() const { IsUsedInGOT = true; }

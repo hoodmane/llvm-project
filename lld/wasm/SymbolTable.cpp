@@ -900,12 +900,11 @@ TableSymbol *SymbolTable::createDefinedIndirectFunctionTable(StringRef name) {
   return sym;
 }
 
+// __externref_table is always i32-indexed, even under wasm64: an
+// `__externref_t *` holds a 32-bit slot index regardless of pointer width.
 TableSymbol *SymbolTable::createUndefinedExternrefTable(StringRef name) {
   LLVM_DEBUG(llvm::dbgs() << "createUndefinedExternrefTable\n");
-  uint8_t limitsFlags = ctx.arg.is64.value_or(false)
-                            ? WASM_LIMITS_FLAG_IS_64
-                            : WASM_LIMITS_FLAG_NONE;
-  WasmLimits limits{limitsFlags, 0, 0, 0};
+  WasmLimits limits{WASM_LIMITS_FLAG_NONE, 0, 0, 0};
   WasmTableType *type = make<WasmTableType>();
   type->ElemType = ValType::EXTERNREF;
   type->Limits = limits;
@@ -922,10 +921,7 @@ TableSymbol *SymbolTable::createUndefinedExternrefTable(StringRef name) {
 TableSymbol *SymbolTable::createDefinedExternrefTable(StringRef name) {
   LLVM_DEBUG(llvm::dbgs() << "createDefinedExternrefTable\n");
   const uint32_t invalidIndex = -1;
-  uint8_t limitsFlags = ctx.arg.is64.value_or(false)
-                            ? WASM_LIMITS_FLAG_IS_64
-                            : WASM_LIMITS_FLAG_NONE;
-  WasmLimits limits{limitsFlags, 0, 0, 0};
+  WasmLimits limits{WASM_LIMITS_FLAG_NONE, 0, 0, 0};
   WasmTableType type{ValType::EXTERNREF, limits};
   WasmTable desc{invalidIndex, type, name};
   InputTable *table = make<InputTable>(desc, nullptr);

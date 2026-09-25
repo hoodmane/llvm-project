@@ -1,4 +1,4 @@
-; RUN: llc < %s --mtriple=wasm32-unknown-unknown -asm-verbose=false -mattr=+reference-types | FileCheck %s --check-prefixes=CHECK,WASM32
+; RUN: llc < %s --mtriple=wasm32-unknown-unknown -asm-verbose=false -mattr=+reference-types | FileCheck %s --check-prefixes=CHECK
 ; RUN: llc < %s --mtriple=wasm64-unknown-unknown -asm-verbose=false -mattr=+reference-types | FileCheck %s --check-prefixes=CHECK,WASM64
 
 ; An externref cannot live in linear memory, so when its address is taken it
@@ -11,6 +11,10 @@
 ; __externref_table. Before returning, the stack pointer is restored and the
 ; used slots are cleared with table.fill ... ref.null so the references are not
 ; pinned by the GC after the frame is gone.
+;
+; The externref table is i32-indexed even under wasm64, so the stack pointer
+; global and all slot arithmetic are i32; the index is only zero-extended to
+; pointer width where it is used as a `ptr` (here: passed to @use).
 
 %externref = type target("wasm.externref")
 
@@ -22,15 +26,14 @@ declare void @use(ptr)
 ; CHECK:       .functype spill_one (externref) -> (externref)
 ; The prologue reads __externref_stack_pointer and subtracts one slot.
 ; CHECK:       global.get __externref_stack_pointer
-; WASM32:      i32.const -1
-; WASM32:      i32.add
-; WASM64:      i64.const -1
-; WASM64:      i64.add
+; CHECK:       i32.const -1
+; CHECK:       i32.add
 ; The incoming value is stored into the reserved slot.
 ; CHECK:       table.set __externref_table
 ; The decremented stack pointer is written back, then the slot index (== the
-; pointer) is passed to the callee.
+; pointer, zero-extended to pointer width on wasm64) is passed to the callee.
 ; CHECK:       global.set __externref_stack_pointer
+; WASM64:      i64.extend_i32_u
 ; CHECK:       call use
 ; The stack pointer is restored, the spilled value reloaded, and the slot
 ; cleared with ref.null before returning.
@@ -51,8 +54,7 @@ define %externref @spill_one(%externref %v) {
 ; Two address-taken externrefs share one prologue/epilogue and reserve two
 ; consecutive slots; the epilogue clears both with a single table.fill of two.
 ; CHECK-LABEL: spill_two:
-; WASM32:      i32.const -2
-; WASM64:      i64.const -2
+; CHECK:       i32.const -2
 ; CHECK:       global.set __externref_stack_pointer
 ; CHECK:       call use
 ; CHECK:       call use
@@ -84,5 +86,6 @@ define %externref @no_spill(%externref %v) {
   ret %externref %r
 }
 
-; The externref spill stack pointer is a mutable, pointer-width global.
-; CHECK: .globaltype __externref_stack_pointer, {{i32|i64}}{{$}}
+; The externref spill stack pointer is a mutable i32 global regardless of
+; pointer width, because the externref table is always i32-indexed.
+; CHECK: .globaltype __externref_stack_pointer, i32{{$}}

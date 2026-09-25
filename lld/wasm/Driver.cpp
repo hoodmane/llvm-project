@@ -931,9 +931,13 @@ static UndefinedFunction *createUndefinedFunction(StringRef name,
   return sym;
 }
 
-static InputGlobal *createGlobal(StringRef name, bool isMutable) {
+// Creates a synthetic integer global. Pointer-width globals (the default)
+// follow --is64; callers holding table slot indices pass is64=false so the
+// global is i32 regardless of the target's pointer width.
+static InputGlobal *createGlobal(StringRef name, bool isMutable,
+                                 std::optional<bool> is64Opt = std::nullopt) {
   llvm::wasm::WasmGlobal wasmGlobal;
-  bool is64 = ctx.arg.is64.value_or(false);
+  bool is64 = is64Opt.value_or(ctx.arg.is64.value_or(false));
   wasmGlobal.Type = {uint8_t(is64 ? WASM_TYPE_I64 : WASM_TYPE_I32), isMutable};
   wasmGlobal.InitExpr = intConst(0, is64);
   wasmGlobal.SymbolName = name;
@@ -946,8 +950,10 @@ static DefinedGlobal *createGlobalVariable(StringRef name, bool isMutable,
   return symtab->addSyntheticGlobal(name, flags, g);
 }
 
-static DefinedGlobal *createOptionalGlobal(StringRef name, bool isMutable) {
-  InputGlobal *g = createGlobal(name, isMutable);
+static DefinedGlobal *
+createOptionalGlobal(StringRef name, bool isMutable,
+                     std::optional<bool> is64 = std::nullopt) {
+  InputGlobal *g = createGlobal(name, isMutable, is64);
   return symtab->addOptionalGlobalSymbol(name, g);
 }
 
@@ -1077,12 +1083,11 @@ static bool referenceTypesEnabled() {
 static void createExternrefTableBaseSymbol() {
   if (ctx.arg.relocatable || !ctx.isPic || !referenceTypesEnabled())
     return;
+  // The externref table is i32-indexed even under wasm64, so its base slot
+  // offset is always an i32 global (unlike the pointer-width __table_base).
   static llvm::wasm::WasmGlobalType globalTypeI32 = {WASM_TYPE_I32, false};
-  static llvm::wasm::WasmGlobalType globalTypeI64 = {WASM_TYPE_I64, false};
-  auto *globalType =
-      ctx.arg.is64.value_or(false) ? &globalTypeI64 : &globalTypeI32;
   ctx.sym.externrefTableBase =
-      createUndefinedGlobal("__externref_table_base", globalType);
+      createUndefinedGlobal("__externref_table_base", &globalTypeI32);
   ctx.sym.externrefTableBase->markLive();
 }
 
@@ -1109,21 +1114,23 @@ static void createOptionalSymbols() {
 
     // Boundary markers for the __externref_table regions.  These are the
     // table-index-space analogs of the linear-memory boundary symbols above.
-    // They are immutable globals holding slot indices (i32, or i64 under
-    // wasm64), except for the mutable externref spill stack pointer.  They are
-    // only relevant when the reference-types feature is in use, so that e.g.
-    // --export-all does not emit them for plain MVP programs.
+    // They are immutable globals holding slot indices, except for the mutable
+    // externref spill stack pointer.  The externref table is i32-indexed even
+    // under wasm64, so these are always i32.  They are only relevant when the
+    // reference-types feature is in use, so that e.g. --export-all does not
+    // emit them for plain MVP programs.
     if (referenceTypesEnabled()) {
+      const bool i32 = false;
       ctx.sym.externrefDataEnd =
-          createOptionalGlobal("__externref_data_end", false);
+          createOptionalGlobal("__externref_data_end", false, i32);
       ctx.sym.externrefStackLow =
-          createOptionalGlobal("__externref_stack_low", false);
+          createOptionalGlobal("__externref_stack_low", false, i32);
       ctx.sym.externrefStackHigh =
-          createOptionalGlobal("__externref_stack_high", false);
+          createOptionalGlobal("__externref_stack_high", false, i32);
       ctx.sym.externrefStackPointer =
-          createOptionalGlobal("__externref_stack_pointer", true);
+          createOptionalGlobal("__externref_stack_pointer", true, i32);
       ctx.sym.externrefHeapBase =
-          createOptionalGlobal("__externref_heap_base", false);
+          createOptionalGlobal("__externref_heap_base", false, i32);
     }
   }
 

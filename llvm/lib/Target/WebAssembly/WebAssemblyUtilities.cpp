@@ -128,10 +128,10 @@ MCSymbolWasm *WebAssembly::getOrCreateExternrefTableSymbol(
     if (!Sym->isExternRefTable())
       Ctx.reportError(SMLoc(), "symbol is not a wasm externref table");
   } else {
-    bool is64 = Subtarget && Subtarget->getTargetTriple().isArch64Bit();
     Sym = static_cast<MCSymbolWasm *>(Ctx.getOrCreateSymbol(Name));
-    Sym->setExternRefTable(is64);
-    // The default externref table is synthesized by the linker.
+    // The default externref table is synthesized by the linker.  It is always
+    // i32-indexed, even under wasm64.
+    Sym->setExternRefTable();
   }
   // MVP object files can't have symtab entries for tables.
   if (!(Subtarget && Subtarget->hasReferenceTypes()))

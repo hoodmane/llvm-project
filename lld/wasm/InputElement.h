@@ -64,8 +64,11 @@ public:
   const WasmGlobalType &getType() const { return type; }
   const WasmInitExpr &getInitExpr() const { return initExpr; }
 
+  // Sets the init expr to an integer constant of the global's own type. For
+  // pointer-width globals this follows --is64; index globals such as the
+  // __externref_table markers are always i32 and get an i32.const.
   void setPointerValue(uint64_t value) {
-    initExpr = intConst(value, ctx.arg.is64.value_or(false));
+    initExpr = intConst(value, type.Type == llvm::wasm::WASM_TYPE_I64);
   }
 
 private:

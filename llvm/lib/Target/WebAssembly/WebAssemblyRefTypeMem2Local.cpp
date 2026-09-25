@@ -223,18 +223,20 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
   if (ToSpill.empty())
     return true;
 
-  // Reserve one __externref_table slot per address-taken reference. The slot
-  // indices are integers the width of a pointer (i32, or i64 under wasm64),
-  // matching the __externref_stack_pointer global synthesized by the linker.
+  // Reserve one __externref_table slot per address-taken reference. The
+  // externref table is i32-indexed even under wasm64, so slot indices and the
+  // linker-synthesized __externref_stack_pointer global are always i32; an
+  // `__externref_t *` (a pointer-width integer) holds the zero-extended index.
   Module &M = *F.getParent();
   LLVMContext &Ctx = M.getContext();
   const DataLayout &DL = M.getDataLayout();
   Type *IntPtrTy = DL.getIntPtrType(Ctx, /*AddressSpace=*/0);
+  Type *Int32Ty = Type::getInt32Ty(Ctx);
 
   GlobalVariable *SP = M.getNamedGlobal(ExternrefStackPointerName);
   if (!SP)
     SP = new GlobalVariable(
-        M, IntPtrTy, /*isConstant=*/false, GlobalValue::ExternalLinkage,
+        M, Int32Ty, /*isConstant=*/false, GlobalValue::ExternalLinkage,
         /*Initializer=*/nullptr, ExternrefStackPointerName,
         /*InsertBefore=*/nullptr, GlobalValue::NotThreadLocal,
         WebAssembly::WASM_ADDRESS_SPACE_VAR);
@@ -251,33 +253,29 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
         GlobalValue::NotThreadLocal, WebAssembly::WASM_ADDRESS_SPACE_VAR);
 
   const unsigned NumSlots = ToSpill.size();
-  Type *Int32Ty = Type::getInt32Ty(Ctx);
 
   // Prologue: load the current externref stack pointer, grow the stack down by
   // NumSlots, and write it back. Loads/stores of the addrspace(1) global lower
   // to global.get/global.set __externref_stack_pointer.
   IRBuilder<> IRB(&*F.getEntryBlock().getFirstInsertionPt());
-  Value *OldSP = IRB.CreateLoad(IntPtrTy, SP, "externref.sp");
+  Value *OldSP = IRB.CreateLoad(Int32Ty, SP, "externref.sp");
   Value *NewSP = IRB.CreateSub(
-      OldSP, ConstantInt::get(IntPtrTy, NumSlots), "externref.sp.new");
+      OldSP, ConstantInt::get(Int32Ty, NumSlots), "externref.sp.new");
   IRB.CreateStore(NewSP, SP);
 
-  // table.fill indices and counts are i32 regardless of pointer width.
-  Value *FillStart = NewSP;
-  if (IntPtrTy != Int32Ty)
-    FillStart = IRB.CreateTrunc(NewSP, Int32Ty, "externref.sp.i32");
-
   // Each spilled reference gets one slot at NewSP + k; its address is that slot
-  // index reinterpreted as a pointer. Compute the address just before each
-  // alloca (NewSP, defined in the entry prologue, dominates them all) and then
-  // remove the alloca.
+  // index reinterpreted as a pointer (zero-extended to pointer width on
+  // wasm64). Compute the address just before each alloca (NewSP, defined in
+  // the entry prologue, dominates them all) and then remove the alloca.
   for (unsigned K = 0; K != NumSlots; ++K) {
     AllocaInst *AI = ToSpill[K];
     IRBuilder<> B(AI);
     Value *Idx = NewSP;
     if (K != 0)
-      Idx = B.CreateAdd(NewSP, ConstantInt::get(IntPtrTy, K),
+      Idx = B.CreateAdd(NewSP, ConstantInt::get(Int32Ty, K),
                         AI->getName() + ".slot");
+    if (IntPtrTy != Int32Ty)
+      Idx = B.CreateZExt(Idx, IntPtrTy, AI->getName() + ".idx");
     Value *Addr = B.CreateIntToPtr(Idx, AI->getType(), AI->getName());
     AI->replaceAllUsesWith(Addr);
     AI->eraseFromParent();
@@ -297,7 +295,7 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
     IRBuilder<> EpilogueB(InsertPt);
     EpilogueB.CreateStore(OldSP, SP);
     Value *Null = EpilogueB.CreateCall(RefNull, {}, "externref.null");
-    EpilogueB.CreateCall(TableFill, {Table, FillStart, Null, SlotCount});
+    EpilogueB.CreateCall(TableFill, {Table, NewSP, Null, SlotCount});
   };
 
   SmallVector<CatchSwitchInst *, 4> CatchSwitchesToCaller;

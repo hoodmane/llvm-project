@@ -244,14 +244,22 @@ MCSymbol *WebAssemblyAsmPrinter::getOrCreateWasmSymbol(StringRef Name) {
   // Clang-provided symbols.
   if (Name == "__stack_pointer" || Name == "__tls_base" ||
       Name == "__memory_base" || Name == "__table_base" ||
-      Name == "__externref_table_base" || Name == "__tls_size" ||
-      Name == "__tls_align") {
+      Name == "__tls_size" || Name == "__tls_align") {
     bool Mutable = Name == "__stack_pointer" || Name == "__tls_base";
     WasmSym->setType(wasm::WASM_SYMBOL_TYPE_GLOBAL);
     WasmSym->setGlobalType(wasm::WasmGlobalType{
         uint8_t(Subtarget.hasAddr64() ? wasm::WASM_TYPE_I64
                                       : wasm::WASM_TYPE_I32),
         Mutable});
+    return WasmSym;
+  }
+
+  // __externref_table is i32-indexed even under wasm64, so its PIC base slot
+  // offset is an i32 global regardless of pointer width (unlike __table_base).
+  if (Name == "__externref_table_base") {
+    WasmSym->setType(wasm::WASM_SYMBOL_TYPE_GLOBAL);
+    WasmSym->setGlobalType(
+        wasm::WasmGlobalType{uint8_t(wasm::WASM_TYPE_I32), /*Mutable=*/false});
     return WasmSym;
   }
 

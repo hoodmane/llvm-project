@@ -6,10 +6,11 @@
 ; __externref_table_base for a symbol defined in this module, mirroring how a
 ; function table index is computed relative to __table_base. A preemptible
 ; symbol (defined in another dynamic library) is instead loaded from a GOT
-; global. The relative slot index is an i32; on wasm64 the pointer-width base
-; is truncated to i32 before the add (PIC64's i32.wrap_i64).
+; global. The externref table is i32-indexed even under wasm64, so
+; __externref_table_base, the GOT entry and the slot arithmetic are all i32 and
+; the PIC output is identical for wasm32 and wasm64.
 ; RUN: llc < %s --mtriple=wasm32-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC
-; RUN: llc < %s --mtriple=wasm64-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC,PIC64
+; RUN: llc < %s --mtriple=wasm64-unknown-unknown -asm-verbose=false -mattr=+reference-types -relocation-model=pic | FileCheck %s --check-prefixes=PIC
 
 ; A global variable whose value type is externref cannot live in linear memory.
 ; References to it are lowered to table.get/table.set against the
@@ -18,6 +19,9 @@
 ; global's symbol.
 
 %externref = type target("wasm.externref")
+
+; __externref_table_base is an i32 global regardless of pointer width.
+; PIC: .globaltype __externref_table_base, i32, immutable
 
 ; CHECK: .tabletype __externref_table, externref
 ; PIC: .tabletype __externref_table, externref
@@ -34,7 +38,6 @@ define %externref @get_global() {
 ; PIC-LABEL:    get_global:
 ; PIC-NEXT:     .functype       get_global () -> (externref)
 ; PIC-NEXT:     global.get      __externref_table_base
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     i32.const       g@EXTERNREF_TABLE_INDEX_REL
 ; PIC-NEXT:     i32.add
 ; PIC-NEXT:     table.get       __externref_table
@@ -54,7 +57,6 @@ define void @set_global(%externref %v) {
 ; PIC-LABEL:    set_global:
 ; PIC-NEXT:     .functype       set_global (externref) -> ()
 ; PIC-NEXT:     global.get      __externref_table_base
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     i32.const       g@EXTERNREF_TABLE_INDEX_REL
 ; PIC-NEXT:     i32.add
 ; PIC-NEXT:     local.get       0
@@ -77,7 +79,6 @@ define %externref @get_other_global() {
 ; PIC-LABEL:    get_other_global:
 ; PIC-NEXT:     .functype       get_other_global () -> (externref)
 ; PIC-NEXT:     global.get      __externref_table_base
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     i32.const       h@EXTERNREF_TABLE_INDEX_REL
 ; PIC-NEXT:     i32.add
 ; PIC-NEXT:     table.get       __externref_table
@@ -99,7 +100,6 @@ define %externref @get_external_global() {
 ; PIC-LABEL:    get_external_global:
 ; PIC-NEXT:     .functype       get_external_global () -> (externref)
 ; PIC-NEXT:     global.get      ext@GOT
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     table.get       __externref_table
 ; PIC-NEXT:     end_function
   %v = load %externref, ptr @ext, align 1

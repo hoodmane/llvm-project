@@ -7,8 +7,10 @@
 ; index in the linker-synthesized __externref_table, not a linear-memory
 ; address: a pointer to an externref is a table slot index. The slot is
 ; materialized exactly like a load/store of the global (see externref-global.ll),
-; so address-of and dereference always agree. The slot index is an i32; on
-; wasm64 it is zero-extended to the i64 pointer width.
+; so address-of and dereference always agree. The externref table is i32-indexed
+; even under wasm64, so the slot index (and, under PIC, __externref_table_base
+; and the GOT entry) is an i32; on wasm64 it is zero-extended to the i64 pointer
+; width only at the end.
 
 %externref = type target("wasm.externref")
 
@@ -26,7 +28,6 @@ define ptr @addr_of_global() {
 ; PIC32-NEXT:   .functype       addr_of_global () -> (i32)
 ; PIC64-NEXT:   .functype       addr_of_global () -> (i64)
 ; PIC-NEXT:     global.get      __externref_table_base
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     i32.const       g@EXTERNREF_TABLE_INDEX_REL
 ; PIC-NEXT:     i32.add
 ; PIC64-NEXT:   i64.extend_i32_u
@@ -35,9 +36,8 @@ define ptr @addr_of_global() {
 }
 
 ; An external (preemptible) externref global: under PIC its slot index is loaded
-; from a GOT global rather than computed relative to __externref_table_base. On
-; wasm64 the i64 GOT value is truncated to the i32 slot, then zero-extended back
-; to the i64 pointer width (folded to an i64.and with the low-32-bit mask).
+; from an i32 GOT global rather than computed relative to __externref_table_base.
+; On wasm64 it is zero-extended to the i64 pointer width.
 @ext = external global %externref, align 1
 
 define ptr @addr_of_external_global() {
@@ -52,8 +52,7 @@ define ptr @addr_of_external_global() {
 ; PIC32-NEXT:   .functype       addr_of_external_global () -> (i32)
 ; PIC64-NEXT:   .functype       addr_of_external_global () -> (i64)
 ; PIC-NEXT:     global.get      ext@GOT
-; PIC64-NEXT:   i64.const       4294967295
-; PIC64-NEXT:   i64.and
+; PIC64-NEXT:   i64.extend_i32_u
 ; PIC-NEXT:     end_function
   ret ptr @ext
 }
@@ -78,7 +77,6 @@ define ptr @addr_of_elem0() {
 ; PIC32-NEXT:   .functype       addr_of_elem0 () -> (i32)
 ; PIC64-NEXT:   .functype       addr_of_elem0 () -> (i64)
 ; PIC-NEXT:     global.get      __externref_table_base
-; PIC64-NEXT:   i32.wrap_i64
 ; PIC-NEXT:     i32.const       arr@EXTERNREF_TABLE_INDEX_REL
 ; PIC-NEXT:     i32.add
 ; PIC64-NEXT:   i64.extend_i32_u

@@ -1912,8 +1912,9 @@ static const GlobalAddressSDNode *IsExternrefTableSlot(SDValue Base, EVT VT,
 //     is only known at load time and is loaded from a GOT global via
 //     `global.get sym@GOT`.
 //
-// __externref_table_base and the GOT global are pointer-width (i64 under
-// wasm64), so the result is truncated to the i32 table index.
+// __externref_table is i32-indexed even under wasm64, so __externref_table_base
+// and the GOT.externref globals are i32 regardless of pointer width and the
+// whole computation happens at i32 width.
 static SDValue getExternrefTableSlotIndex(const GlobalAddressSDNode *GA,
                                           const SDLoc &DL, SelectionDAG &DAG) {
   // This materializes the base slot of the whole symbol; any constant or
@@ -1924,22 +1925,14 @@ static SDValue getExternrefTableSlotIndex(const GlobalAddressSDNode *GA,
 
   if (DAG.getTarget().isPositionIndependent()) {
     MachineFunction &MF = DAG.getMachineFunction();
-    MVT PtrVT = DAG.getTargetLoweringInfo().getPointerTy(DAG.getDataLayout());
     if (DAG.getTarget().shouldAssumeDSOLocal(GV)) {
       const char *BaseName =
           MF.createExternalSymbolName("__externref_table_base");
       SDValue BaseAddr =
-          DAG.getNode(WebAssemblyISD::Wrapper, DL, PtrVT,
-                      DAG.getTargetExternalSymbol(BaseName, PtrVT));
-      // A table slot index is an i32 and the
-      // R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB relocation patches a 5-byte i32
-      // LEB field, so the relative slot must be materialized as an i32.const
-      // (not an i64.const, whose 10-byte immediate the relocation would only
-      // partially patch). Do the addition at i32 width, truncating the
-      // pointer-width base first on wasm64; this is safe because
-      // (base + slot) mod 2^32 == (base mod 2^32) + slot.
-      if (PtrVT != MVT::i32)
-        BaseAddr = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, BaseAddr);
+          DAG.getNode(WebAssemblyISD::Wrapper, DL, MVT::i32,
+                      DAG.getTargetExternalSymbol(BaseName, MVT::i32));
+      // The R_WASM_EXTERNREF_TABLE_INDEX_REL_LEB relocation patches a 5-byte
+      // i32 LEB field, so the relative slot is materialized as an i32.const.
       SDValue Rel = DAG.getNode(
           WebAssemblyISD::WrapperREL, DL, MVT::i32,
           DAG.getTargetGlobalAddress(
@@ -1947,13 +1940,9 @@ static SDValue getExternrefTableSlotIndex(const GlobalAddressSDNode *GA,
               WebAssemblyII::MO_EXTERNREF_TABLE_INDEX_REL));
       return DAG.getNode(ISD::ADD, DL, MVT::i32, BaseAddr, Rel);
     }
-    SDValue Sym = DAG.getTargetGlobalAddress(GV, DL, PtrVT, /*offset=*/0,
+    SDValue Sym = DAG.getTargetGlobalAddress(GV, DL, MVT::i32, /*offset=*/0,
                                              WebAssemblyII::MO_GOT);
-    SDValue Slot = DAG.getNode(WebAssemblyISD::Wrapper, DL, PtrVT, Sym);
-    // Table indices are i32 regardless of pointer width.
-    if (PtrVT != MVT::i32)
-      Slot = DAG.getNode(ISD::TRUNCATE, DL, MVT::i32, Slot);
-    return Slot;
+    return DAG.getNode(WebAssemblyISD::Wrapper, DL, MVT::i32, Sym);
   }
 
   SDValue Sym = DAG.getTargetGlobalAddress(
