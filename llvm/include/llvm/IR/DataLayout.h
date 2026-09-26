@@ -415,6 +415,21 @@ public:
            PS.HasExternalState;
   }
 
+  /// For the pointer-representation queries below, returns the pointer type
+  /// whose address-space specification governs \p Ty: \p Ty itself (or its
+  /// vector element type) if it is a pointer, or the layout type of a target
+  /// extension type that is laid out as a pointer. A target extension type
+  /// laid out as, e.g., an unstable-representation pointer inherits that
+  /// property: its values likewise cannot be copied bytewise or
+  /// materialized from integers (an example is WebAssembly's externref, laid
+  /// out as a pointer in a non-integral address space).
+  static PointerType *getPointerTypeForSpecQuery(Type *Ty) {
+    Type *ScalarTy = Ty->getScalarType();
+    if (auto *TET = dyn_cast<TargetExtType>(ScalarTy))
+      ScalarTy = TET->getLayoutType()->getScalarType();
+    return dyn_cast<PointerType>(ScalarTy);
+  }
+
   /// Returns whether this address space has an "unstable" pointer
   /// representation. The bitwise pattern of such pointers is allowed to change
   /// in a target-specific way. For example, this could be used for copying
@@ -424,7 +439,7 @@ public:
     return getPointerSpec(AddrSpace).HasUnstableRepresentation;
   }
   bool hasUnstableRepresentation(Type *Ty) const {
-    auto *PTy = dyn_cast<PointerType>(Ty->getScalarType());
+    auto *PTy = getPointerTypeForSpecQuery(Ty);
     return PTy && hasUnstableRepresentation(PTy->getPointerAddressSpace());
   }
 
@@ -440,7 +455,7 @@ public:
     return getPointerSpec(AddrSpace).HasExternalState;
   }
   bool hasExternalState(Type *Ty) const {
-    auto *PTy = dyn_cast<PointerType>(Ty->getScalarType());
+    auto *PTy = getPointerTypeForSpecQuery(Ty);
     return PTy && hasExternalState(PTy->getPointerAddressSpace());
   }
 
@@ -478,17 +493,17 @@ public:
   }
 
   bool isNonIntegralPointerType(Type *Ty) const {
-    auto *PTy = dyn_cast<PointerType>(Ty->getScalarType());
+    auto *PTy = getPointerTypeForSpecQuery(Ty);
     return PTy && isNonIntegralPointerType(PTy);
   }
 
   bool mustNotIntroducePtrToInt(Type *Ty) const {
-    auto *PTy = dyn_cast<PointerType>(Ty->getScalarType());
+    auto *PTy = getPointerTypeForSpecQuery(Ty);
     return PTy && mustNotIntroducePtrToInt(PTy->getPointerAddressSpace());
   }
 
   bool mustNotIntroduceIntToPtr(Type *Ty) const {
-    auto *PTy = dyn_cast<PointerType>(Ty->getScalarType());
+    auto *PTy = getPointerTypeForSpecQuery(Ty);
     return PTy && mustNotIntroduceIntToPtr(PTy->getPointerAddressSpace());
   }
 
