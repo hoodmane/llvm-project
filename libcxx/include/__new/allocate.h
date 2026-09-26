@@ -73,6 +73,35 @@ inline _LIBCPP_HIDE_FROM_ABI void __libcpp_deallocate_unsized(
 #endif
   return __builtin_operator_delete(__ptr);
 }
+
+#if defined(__wasm_reference_types__)
+// A WebAssembly externref cannot live in linear memory: an `__externref_t*` is
+// an index into the externref table, and storage for externrefs is obtained
+// from the compiler-rt table allocator (the same functions `new __externref_t`
+// and `delete` lower to) rather than from operator new. Route the typed
+// allocation primitives there so that std::allocator<__externref_t>, and thus
+// the standard containers, work with externrefs.
+extern "C" __externref_t* __externref_table_alloc(size_t __nrefs);
+extern "C" void __externref_table_free(__externref_t* __p);
+
+template <>
+inline _LIBCPP_HIDE_FROM_ABI _LIBCPP_NO_CFI __externref_t*
+__libcpp_allocate<__externref_t>(__element_count __n, size_t) {
+  return __externref_table_alloc(static_cast<size_t>(__n));
+}
+
+template <>
+inline _LIBCPP_HIDE_FROM_ABI void
+__libcpp_deallocate<__externref_t>(__externref_t* __ptr, __element_count, size_t) _NOEXCEPT {
+  __externref_table_free(__ptr);
+}
+
+template <>
+inline _LIBCPP_HIDE_FROM_ABI void __libcpp_deallocate_unsized<__externref_t>(__externref_t* __ptr, size_t) _NOEXCEPT {
+  __externref_table_free(__ptr);
+}
+#endif // __wasm_reference_types__
+
 _LIBCPP_END_NAMESPACE_STD
 
 #endif // _LIBCPP___NEW_ALLOCATE_H
