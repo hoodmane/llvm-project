@@ -230,7 +230,6 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
   Module &M = *F.getParent();
   LLVMContext &Ctx = M.getContext();
   const DataLayout &DL = M.getDataLayout();
-  Type *IntPtrTy = DL.getIntPtrType(Ctx, /*AddressSpace=*/0);
   Type *Int32Ty = Type::getInt32Ty(Ctx);
 
   GlobalVariable *SP = M.getNamedGlobal(ExternrefStackPointerName);
@@ -274,8 +273,12 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
     if (K != 0)
       Idx = B.CreateAdd(NewSP, ConstantInt::get(Int32Ty, K),
                         AI->getName() + ".slot");
-    if (IntPtrTy != Int32Ty)
-      Idx = B.CreateZExt(Idx, IntPtrTy, AI->getName() + ".idx");
+    // The slot index becomes the pointer value. Pointers to externref in the
+    // dedicated externref-pointer address space are 32-bit on every target;
+    // a plain (address space 0) pointer to the alloca is pointer-width.
+    Type *PtrIntTy = DL.getIntPtrType(AI->getType());
+    if (PtrIntTy != Int32Ty)
+      Idx = B.CreateZExt(Idx, PtrIntTy, AI->getName() + ".idx");
     Value *Addr = B.CreateIntToPtr(Idx, AI->getType(), AI->getName());
     AI->replaceAllUsesWith(Addr);
     AI->eraseFromParent();

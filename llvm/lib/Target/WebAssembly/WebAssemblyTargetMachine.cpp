@@ -19,6 +19,7 @@
 #include "WebAssemblyMachineFunctionInfo.h"
 #include "WebAssemblyTargetObjectFile.h"
 #include "WebAssemblyTargetTransformInfo.h"
+#include "Utils/WasmAddressSpaces.h"
 #include "WebAssemblyUtilities.h"
 #include "llvm/CodeGen/GlobalISel/IRTranslator.h"
 #include "llvm/CodeGen/GlobalISel/InstructionSelect.h"
@@ -223,6 +224,23 @@ WebAssemblyTargetMachine::WebAssemblyTargetMachine(
 }
 
 WebAssemblyTargetMachine::~WebAssemblyTargetMachine() = default; // anchor.
+
+bool WebAssemblyTargetMachine::isNoopAddrSpaceCast(unsigned SrcAS,
+                                                   unsigned DestAS) const {
+  if (SrcAS == DestAS)
+    return true;
+  // Only casts between the default and externref-pointer address spaces are
+  // meaningful, and only when they have the same width (wasm32); on wasm64
+  // the cast is a zext / trunc.
+  auto IsPtrLike = [](unsigned AS) {
+    return WebAssembly::isDefaultAddressSpace(AS) ||
+           WebAssembly::isExternrefPtrAddressSpace(AS);
+  };
+  if (!IsPtrLike(SrcAS) || !IsPtrLike(DestAS))
+    return false;
+  const DataLayout &DL = createDataLayout();
+  return DL.getPointerSizeInBits(SrcAS) == DL.getPointerSizeInBits(DestAS);
+}
 
 const WebAssemblySubtarget *WebAssemblyTargetMachine::getSubtargetImpl() const {
   return getSubtargetImpl(std::string(getTargetCPU()),

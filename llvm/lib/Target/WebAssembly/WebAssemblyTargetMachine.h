@@ -53,6 +53,10 @@ public:
   // Pass Pipeline Configuration
   TargetPassConfig *createPassConfig(PassManagerBase &PM) override;
 
+  // Casting between a linear-memory pointer and an externref pointer (a table
+  // slot index) is a no-op when both are 32 bits wide, i.e. on wasm32.
+  bool isNoopAddrSpaceCast(unsigned SrcAS, unsigned DestAS) const override;
+
   TargetLoweringObjectFile *getObjFileLowering() const override {
     return TLOF.get();
   }

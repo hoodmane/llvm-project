@@ -113,6 +113,15 @@ WebAssemblyTargetLowering::WebAssemblyTargetLowering(
 
   setOperationAction(ISD::GlobalAddress, MVTPtr, Custom);
   setOperationAction(ISD::GlobalTLSAddress, MVTPtr, Custom);
+  // The address of an externref data global is its __externref_table slot
+  // index, i.e. a pointer in the (i32) externref-pointer address space; see
+  // LowerGlobalAddress.
+  if (MVTPtr != MVT::i32)
+    setOperationAction(ISD::GlobalAddress, MVT::i32, Custom);
+  // Casts between linear-memory pointers and externref pointers only change
+  // the integer width (an externref pointer is always i32); see
+  // performADDRSPACECASTCombine.
+  setTargetDAGCombine(ISD::ADDRSPACECAST);
   setOperationAction(ISD::ExternalSymbol, MVTPtr, Custom);
   setOperationAction(ISD::JumpTable, MVTPtr, Custom);
   setOperationAction(ISD::BlockAddress, MVTPtr, Custom);
@@ -4230,6 +4239,27 @@ static SDValue performShiftCombine(SDNode *N,
   return DAG.getNode(ISD::CONCAT_VECTORS, DL, VT, MulLo, MulHi);
 }
 
+// The externref-pointer address space holds __externref_table slot indices as
+// i32 values; the default address space holds pointer-width linear-memory
+// addresses. A cast between them (which only arises where the front end knows
+// a value is a slot index, e.g. the address of an externref global) is just an
+// integer width conversion. Casts on wasm32 are no-ops and never reach here
+// (see WebAssemblyTargetMachine::isNoopAddrSpaceCast).
+static SDValue performADDRSPACECASTCombine(SDNode *N,
+                                           TargetLowering::DAGCombinerInfo &DCI) {
+  const auto *ASC = cast<AddrSpaceCastSDNode>(N);
+  unsigned SrcAS = ASC->getSrcAddressSpace();
+  unsigned DstAS = ASC->getDestAddressSpace();
+  auto IsPtrLike = [](unsigned AS) {
+    return WebAssembly::isDefaultAddressSpace(AS) ||
+           WebAssembly::isExternrefPtrAddressSpace(AS);
+  };
+  if (!IsPtrLike(SrcAS) || !IsPtrLike(DstAS))
+    return SDValue();
+  return DCI.DAG.getZExtOrTrunc(N->getOperand(0), SDLoc(N),
+                                N->getValueType(0));
+}
+
 SDValue
 WebAssemblyTargetLowering::PerformDAGCombine(SDNode *N,
                                              DAGCombinerInfo &DCI) const {
@@ -4238,6 +4268,8 @@ WebAssemblyTargetLowering::PerformDAGCombine(SDNode *N,
     return SDValue();
   case ISD::BITCAST:
     return performBitcastCombine(N, DCI);
+  case ISD::ADDRSPACECAST:
+    return performADDRSPACECASTCombine(N, DCI);
   case ISD::SETCC:
     return performSETCCCombine(N, DCI, Subtarget);
   case ISD::VECTOR_SHUFFLE:

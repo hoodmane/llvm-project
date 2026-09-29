@@ -24,7 +24,16 @@ enum WasmAddressSpace : unsigned {
   // linear memory: WebAssembly globals or WebAssembly locals.  Loads and stores
   // to these pointers are lowered to global.get / global.set or local.get /
   // local.set, as appropriate.
-  WASM_ADDRESS_SPACE_VAR = 1
+  WASM_ADDRESS_SPACE_VAR = 1,
+  // The address space of pointers to externref values. An externref cannot
+  // live in linear memory; a pointer to one is an index into the
+  // linker-synthesized __externref_table, and loads and stores through it are
+  // lowered to table.get / table.set. Keeping these pointers in their own
+  // address space lets the front end reject conversions between them and
+  // linear-memory pointers. It is an ordinary integral 32-bit pointer (the
+  // table is i32-indexed even under wasm64) so that slot indices can be
+  // materialized from integers.
+  WASM_ADDRESS_SPACE_EXTERNREF_PTR = 2
 };
 
 inline bool isDefaultAddressSpace(unsigned AS) {
@@ -33,8 +42,12 @@ inline bool isDefaultAddressSpace(unsigned AS) {
 inline bool isWasmVarAddressSpace(unsigned AS) {
   return AS == WASM_ADDRESS_SPACE_VAR;
 }
+inline bool isExternrefPtrAddressSpace(unsigned AS) {
+  return AS == WASM_ADDRESS_SPACE_EXTERNREF_PTR;
+}
 inline bool isValidAddressSpace(unsigned AS) {
-  return isDefaultAddressSpace(AS) || isWasmVarAddressSpace(AS);
+  return isDefaultAddressSpace(AS) || isWasmVarAddressSpace(AS) ||
+         isExternrefPtrAddressSpace(AS);
 }
 
 } // namespace WebAssembly

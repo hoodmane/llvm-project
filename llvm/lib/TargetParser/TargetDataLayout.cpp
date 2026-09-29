@@ -508,15 +508,19 @@ static std::string computeLanaiDataLayout() {
          "-S64";    // 64 bit natural stack alignment
 }
 
+// p2 is the address space of pointers to externref values: an integral 32-bit
+// pointer holding an __externref_table slot index, on both wasm32 and wasm64
+// (the table is always i32-indexed). p10 / p20 are the 1-byte, non-integral
+// layout types of the externref / funcref values themselves.
 static std::string computeWebAssemblyDataLayout(const Triple &TT) {
   return TT.getArch() == Triple::wasm64
-             ? (TT.isOSEmscripten() ? "e-m:e-p:64:64-p10:8:8-p20:8:8-i64:64-"
+             ? (TT.isOSEmscripten() ? "e-m:e-p:64:64-p2:32:32-p10:8:8-p20:8:8-i64:64-"
                                       "i128:128-f128:64-n32:64-S128-ni:1:10:20"
-                                    : "e-m:e-p:64:64-p10:8:8-p20:8:8-i64:64-"
+                                    : "e-m:e-p:64:64-p2:32:32-p10:8:8-p20:8:8-i64:64-"
                                       "i128:128-n32:64-S128-ni:1:10:20")
-             : (TT.isOSEmscripten() ? "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-"
+             : (TT.isOSEmscripten() ? "e-m:e-p:32:32-p2:32:32-p10:8:8-p20:8:8-i64:64-"
                                       "i128:128-f128:64-n32:64-S128-ni:1:10:20"
-                                    : "e-m:e-p:32:32-p10:8:8-p20:8:8-i64:64-"
+                                    : "e-m:e-p:32:32-p2:32:32-p10:8:8-p20:8:8-i64:64-"
                                       "i128:128-n32:64-S128-ni:1:10:20");
 }
 

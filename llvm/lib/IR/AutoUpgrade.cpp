@@ -6901,6 +6901,16 @@ std::string llvm::UpgradeDataLayoutString(StringRef DL, StringRef TT) {
     }
   }
 
+  // WebAssembly: add "-p2:32:32", the address space of pointers to externref
+  // values, in front of the existing "-p10:8:8".
+  if (T.isWasm() && !Res.empty() && !StringRef(Res).contains("-p2:") &&
+      !StringRef(Res).contains("-p:2:")) {
+    std::string P10 = "-p10:8:8";
+    size_t Pos = Res.find(P10);
+    if (Pos != size_t(-1))
+      Res.insert(Pos, "-p2:32:32");
+  }
+
   if (T.isPPC() && T.isOSAIX() && !DL.contains("f64:32:64") && !DL.empty()) {
     size_t Pos = Res.find("-S128");
     if (Pos == StringRef::npos)
