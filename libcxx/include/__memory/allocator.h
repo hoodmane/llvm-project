@@ -87,7 +87,7 @@ public:
     if (__n > allocator_traits<allocator>::max_size(*this))
       std::__throw_bad_array_new_length();
     if (__libcpp_is_constant_evaluated()) {
-      return static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)));
+      return std::__constexpr_allocate<_Tp>(__n);
     } else {
       return std::__libcpp_allocate<_Tp>(__element_count(__n));
     }
@@ -102,7 +102,7 @@ public:
 
   _LIBCPP_HIDE_FROM_ABI _LIBCPP_CONSTEXPR_SINCE_CXX20 void deallocate(_Tp* __p, size_t __n) _NOEXCEPT {
     if (__libcpp_is_constant_evaluated()) {
-      ::operator delete(__p);
+      std::__constexpr_deallocate<_Tp>(__p);
     } else {
       std::__libcpp_deallocate<_Tp>(__p, __element_count(__n));
     }

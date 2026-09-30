@@ -1712,6 +1712,7 @@ module std [system] {
       export * // TODO: Workaround for https://llvm.org/PR120108
     }
     module uses_allocator                     { header "__memory/uses_allocator.h" }
+    module voidify                            { header "__memory/voidify.h" }
     module uses_allocator_construction        { header "__memory/uses_allocator_construction.h" }
     module valid_range                        { header "__memory/valid_range.h" }
 

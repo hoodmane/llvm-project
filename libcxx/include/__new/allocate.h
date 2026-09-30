@@ -74,6 +74,17 @@ inline _LIBCPP_HIDE_FROM_ABI void __libcpp_deallocate_unsized(
   return __builtin_operator_delete(__ptr);
 }
 
+// Allocation during constant evaluation, where only the replaceable global
+// operator new/delete may be used.
+template <class _Tp>
+_LIBCPP_HIDE_FROM_ABI _LIBCPP_CONSTEXPR_SINCE_CXX20 _Tp* __constexpr_allocate(size_t __n) {
+  return static_cast<_Tp*>(::operator new(__n * sizeof(_Tp)));
+}
+template <class _Tp>
+_LIBCPP_HIDE_FROM_ABI _LIBCPP_CONSTEXPR_SINCE_CXX20 void __constexpr_deallocate(_Tp* __p) _NOEXCEPT {
+  ::operator delete(__p);
+}
+
 #if defined(__wasm_reference_types__)
 // A WebAssembly externref cannot live in linear memory: an `__externref_t*` is
 // an index into the externref table, and storage for externrefs is obtained
@@ -99,6 +110,19 @@ __libcpp_deallocate<__externref_t>(__externref_t* __ptr, __element_count, size_t
 template <>
 inline _LIBCPP_HIDE_FROM_ABI void __libcpp_deallocate_unsized<__externref_t>(__externref_t* __ptr, size_t) _NOEXCEPT {
   __externref_table_free(__ptr);
+}
+
+// Externrefs cannot be constant-evaluated; these only exist so that
+// std::allocator<__externref_t> instantiates (an externref pointer does not
+// convert to or from void*).
+template <>
+inline _LIBCPP_HIDE_FROM_ABI _LIBCPP_CONSTEXPR_SINCE_CXX20 __externref_t* __constexpr_allocate<__externref_t>(size_t __n) {
+  return __externref_table_alloc(__n);
+}
+template <>
+inline _LIBCPP_HIDE_FROM_ABI _LIBCPP_CONSTEXPR_SINCE_CXX20 void
+__constexpr_deallocate<__externref_t>(__externref_t* __p) _NOEXCEPT {
+  __externref_table_free(__p);
 }
 #endif // __wasm_reference_types__
 

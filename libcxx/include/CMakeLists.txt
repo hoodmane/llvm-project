@@ -620,6 +620,7 @@ set(files
   __memory/unique_ptr.h
   __memory/unique_temporary_buffer.h
   __memory/uses_allocator.h
+  __memory/voidify.h
   __memory/uses_allocator_construction.h
   __memory/valid_range.h
   __memory_resource/memory_resource.h

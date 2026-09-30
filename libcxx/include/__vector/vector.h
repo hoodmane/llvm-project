@@ -32,6 +32,7 @@
 #include <__iterator/reverse_iterator.h>
 #include <__iterator/wrap_iter.h>
 #include <__memory/addressof.h>
+#include <__memory/voidify.h>
 #include <__memory/allocate_at_least.h>
 #include <__memory/allocator.h>
 #include <__memory/allocator_traits.h>
@@ -718,8 +719,9 @@ private:
   // the documentation for __sanitizer_annotate_contiguous_container.
 
   _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI void
-  __annotate_contiguous_container(const void* __old_mid, const void* __new_mid) const {
-    std::__annotate_contiguous_container<_Allocator>(data(), data() + capacity(), __old_mid, __new_mid);
+  __annotate_contiguous_container(const_pointer __old_mid, const_pointer __new_mid) const {
+    std::__annotate_contiguous_container<_Allocator>(
+        std::__voidify(data()), std::__voidify(data() + capacity()), std::__voidify(__old_mid), std::__voidify(__new_mid));
   }
 
   _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI void __annotate_new(size_type __current_size) const _NOEXCEPT {
@@ -799,7 +801,11 @@ private:
 
   _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI void __move_assign_alloc(vector&, false_type) _NOEXCEPT {}
 
-  template <class _Ptr = pointer, __enable_if_t<is_pointer<_Ptr>::value, int> = 0>
+  // __builtin_assume_aligned goes through void*, which a pointer to a
+  // WebAssembly externref cannot convert to; such pointers are table slot
+  // indices with no alignment to assume anyway.
+  template <class _Ptr = pointer,
+            __enable_if_t<is_pointer<_Ptr>::value && !__libcpp_is_wasm_externref_pointer<_Ptr>::value, int> = 0>
   static _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI _LIBCPP_NO_CFI _Ptr
   __add_alignment_assumption(_Ptr __p) _NOEXCEPT {
     if (!__libcpp_is_constant_evaluated()) {
@@ -808,7 +814,8 @@ private:
     return __p;
   }
 
-  template <class _Ptr = pointer, __enable_if_t<!is_pointer<_Ptr>::value, int> = 0>
+  template <class _Ptr = pointer,
+            __enable_if_t<!is_pointer<_Ptr>::value || __libcpp_is_wasm_externref_pointer<_Ptr>::value, int> = 0>
   static _LIBCPP_CONSTEXPR_SINCE_CXX20 _LIBCPP_HIDE_FROM_ABI _LIBCPP_NO_CFI _Ptr
   __add_alignment_assumption(_Ptr __p) _NOEXCEPT {
     return __p;

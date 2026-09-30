@@ -20,6 +20,7 @@
 #include <__iterator/iterator_traits.h>
 #include <__iterator/reverse_iterator.h>
 #include <__memory/addressof.h>
+#include <__memory/voidify.h>
 #include <__memory/allocator_traits.h>
 #include <__memory/construct_at.h>
 #include <__memory/destroy.h>
@@ -63,7 +64,7 @@ __uninitialized_copy(
   _ForwardIterator __idx = __ofirst;
   auto __guard           = std::__make_exception_guard([&] { std::__destroy(__ofirst, __idx); });
   for (; __ifirst != __ilast && !__stop_copying(__idx); ++__ifirst, (void)++__idx)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType(*__ifirst);
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType(*__ifirst);
   __guard.__complete();
 
   return {std::move(__ifirst), std::move(__idx)};
@@ -86,7 +87,7 @@ __uninitialized_copy_n(_InputIterator __ifirst, _Size __n, _ForwardIterator __of
   _ForwardIterator __idx = __ofirst;
   auto __guard           = std::__make_exception_guard([&] { std::__destroy(__ofirst, __idx); });
   for (; __n > 0 && !__stop_copying(__idx); ++__ifirst, (void)++__idx, (void)--__n)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType(*__ifirst);
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType(*__ifirst);
   __guard.__complete();
 
   return {std::move(__ifirst), std::move(__idx)};
@@ -109,7 +110,7 @@ __uninitialized_fill(_ForwardIterator __first, _Sentinel __last, const _Tp& __x)
   _ForwardIterator __idx = __first;
   auto __guard           = std::__make_exception_guard([&] { std::__destroy(__first, __idx); });
   for (; __idx != __last; ++__idx)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType(__x);
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType(__x);
   __guard.__complete();
 
   return __idx;
@@ -130,7 +131,7 @@ __uninitialized_fill_n(_ForwardIterator __first, _Size __n, const _Tp& __x) {
   _ForwardIterator __idx = __first;
   auto __guard           = std::__make_exception_guard([&] { std::__destroy(__first, __idx); });
   for (; __n > 0; ++__idx, (void)--__n)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType(__x);
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType(__x);
   __guard.__complete();
 
   return __idx;
@@ -153,7 +154,7 @@ __uninitialized_default_construct(_ForwardIterator __first, _Sentinel __last) {
   auto __idx   = __first;
   auto __guard = std::__make_exception_guard([&] { std::__destroy(__first, __idx); });
   for (; __idx != __last; ++__idx)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType;
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType;
   __guard.__complete();
 
   return __idx;
@@ -174,7 +175,7 @@ __uninitialized_default_construct_n(_ForwardIterator __first, _Size __n) {
   auto __idx = __first;
   auto __guard = std::__make_exception_guard([&] { std::__destroy(__first, __idx); });
   for (; __n > 0; ++__idx, (void)--__n)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType;
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType;
   __guard.__complete();
 
   return __idx;
@@ -195,7 +196,7 @@ __uninitialized_value_construct(_ForwardIterator __first, _Sentinel __last) {
   auto __idx   = __first;
   auto __guard = std::__make_exception_guard([&] { std::__destroy(__first, __idx); });
   for (; __idx != __last; ++__idx)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType();
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType();
   __guard.__complete();
 
   return __idx;
@@ -216,7 +217,7 @@ __uninitialized_value_construct_n(_ForwardIterator __first, _Size __n) {
   auto __idx = __first;
   auto __guard = std::__make_exception_guard([&] { std::__destroy(__first, __idx); });
   for (; __n > 0; ++__idx, (void)--__n)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType();
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType();
   __guard.__complete();
 
   return __idx;
@@ -246,7 +247,7 @@ __uninitialized_move(_InputIterator __ifirst,
   auto __idx   = __ofirst;
   auto __guard = std::__make_exception_guard([&] { std::__destroy(__ofirst, __idx); });
   for (; __ifirst != __ilast && !__stop_moving(__idx); ++__idx, (void)++__ifirst) {
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType(__iter_move(__ifirst));
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType(__iter_move(__ifirst));
   }
   __guard.__complete();
 
@@ -278,7 +279,7 @@ __uninitialized_move_n(
   auto __idx   = __ofirst;
   auto __guard = std::__make_exception_guard([&] { std::__destroy(__ofirst, __idx); });
   for (; __n > 0 && !__stop_moving(__idx); ++__idx, (void)++__ifirst, --__n)
-    ::new (static_cast<void*>(std::addressof(*__idx))) _ValueType(__iter_move(__ifirst));
+    ::new (std::__voidify(std::addressof(*__idx))) _ValueType(__iter_move(__ifirst));
   __guard.__complete();
 
   return {std::move(__ifirst), std::move(__idx)};
@@ -572,10 +573,7 @@ _LIBCPP_HIDE_FROM_ABI _LIBCPP_CONSTEXPR_SINCE_CXX14 void __uninitialized_allocat
     __guard.__complete();
     std::__allocator_destroy(__alloc, __first, __last);
   } else {
-    // Casting to void* to suppress clang complaining that this is technically UB.
-    __builtin_memcpy(static_cast<void*>(std::__to_address(__result)),
-                     std::__to_address(__first),
-                     sizeof(_ValueType) * (__last - __first));
+    std::__relocate_bytes(std::__to_address(__result), std::__to_address(__first), __last - __first);
   }
 }
 
