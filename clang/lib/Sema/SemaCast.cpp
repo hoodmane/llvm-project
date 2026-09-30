@@ -187,6 +187,21 @@ namespace {
     // Language specific cast restrictions for address spaces.
     void checkAddressSpaceCast(QualType SrcType, QualType DestType);
 
+    /// A pointer to a WebAssembly externref is a table slot index and can
+    /// never be cast to or from any other pointer type, not even explicitly.
+    /// Returns true (and marks the cast invalid) if this cast does that.
+    bool checkWasmExternrefPointerCast() {
+      if (SrcExpr.isInvalid())
+        return false;
+      if (Self.checkWasmExternrefPointerConversion(
+              SrcExpr.get()->getType(), DestType, OpRange.getBegin(),
+              SrcExpr.get()->getSourceRange())) {
+        SrcExpr = ExprError();
+        return true;
+      }
+      return false;
+    }
+
     void checkCastAlign() {
       Self.CheckCastAlign(SrcExpr.get(), DestType, OpRange);
     }
@@ -1276,6 +1291,8 @@ void CastOperation::CheckReinterpretCast() {
     checkNonOverloadPlaceholders();
   if (SrcExpr.isInvalid()) // if conversion failed, don't report another error
     return;
+  if (checkWasmExternrefPointerCast())
+    return;
 
   unsigned msg = diag::err_bad_cxx_cast_generic;
   TryCastResult tcr =
@@ -1349,6 +1366,8 @@ void CastOperation::CheckStaticCast() {
     if (SrcExpr.isInvalid()) // if conversion failed, don't report another error
       return;
   }
+  if (checkWasmExternrefPointerCast())
+    return;
 
   unsigned msg = diag::err_bad_cxx_cast_generic;
   TryCastResult tcr =
@@ -2811,6 +2830,8 @@ void CastOperation::CheckCXXCStyleCast(bool FunctionalStyle,
     if (CheckHLSLCStyleCast(CCK))
       return;
   }
+  if (checkWasmExternrefPointerCast())
+    return;
 
   if (ValueKind == VK_PRValue && !DestType->isRecordType() &&
       !isPlaceholder(BuiltinType::Overload)) {
@@ -3076,6 +3097,8 @@ void CastOperation::CheckCStyleCast() {
     return;
   QualType SrcType = SrcExpr.get()->getType();
 
+  if (checkWasmExternrefPointerCast())
+    return;
   if (SrcType->isWebAssemblyTableType()) {
     Self.Diag(OpRange.getBegin(), diag::err_wasm_cast_table)
         << 1 << SrcExpr.get()->getSourceRange();

@@ -3522,6 +3522,53 @@ void Sema::DeclareGlobalNewDelete() {
   DeclareGlobalAllocationFunctions(OO_Delete, Context.VoidTy, VoidPtr);
   DeclareGlobalAllocationFunctions(OO_Array_Delete, Context.VoidTy, VoidPtr);
 
+  // A pointer to a WebAssembly externref cannot be converted to void *, so
+  // the library's `::new (static_cast<void*>(p)) T(...)` idiom cannot be used
+  // to construct into an externref table slot. Provide implicit non-allocating
+  // placement forms taking the slot pointer directly; they are treated as
+  // reserved placement operators (see isReservedGlobalPlacementOperator) and
+  // CodeGen lowers the resulting new-expression to a store into the slot.
+  if (Context.getTargetInfo().getTriple().isWasm() &&
+      Context.getTargetInfo().hasFeature("reference-types")) {
+    FunctionProtoType::ExtProtoInfo EPI(
+        Context.getTargetInfo().getDefaultCallingConv());
+    EPI.ExceptionSpec.Type =
+        getLangOpts().CPlusPlus11 ? EST_BasicNoexcept : EST_DynamicNone;
+    QualType ExternrefPtr =
+        Context.getPointerType(Context.getWebAssemblyExternrefType());
+    QualType Params[] = {SizeT, ExternrefPtr};
+    for (OverloadedOperatorKind Kind : {OO_New, OO_Array_New}) {
+      DeclarationName Name = Context.DeclarationNames.getCXXOperatorName(Kind);
+      // Skip if already declared (e.g. by a previous call).
+      bool Found = false;
+      for (NamedDecl *D : Context.getTranslationUnitDecl()->lookup(Name))
+        if (auto *FD = dyn_cast<FunctionDecl>(D))
+          if (FD->getNumParams() == 2 &&
+              Context.hasSameUnqualifiedType(FD->getParamDecl(1)->getType(),
+                                             ExternrefPtr))
+            Found = true;
+      if (Found)
+        continue;
+      QualType FnType = Context.getFunctionType(VoidPtr, Params, EPI);
+      FunctionDecl *Alloc = FunctionDecl::Create(
+          Context, Context.getTranslationUnitDecl(), SourceLocation(),
+          SourceLocation(), Name, FnType, /*TInfo=*/nullptr, SC_None,
+          getCurFPFeatures().isFPConstrained(), false, true);
+      Alloc->setImplicit();
+      Alloc->setVisibleDespiteOwningModule();
+      SmallVector<ParmVarDecl *, 2> ParamDecls;
+      for (QualType PT : Params) {
+        ParmVarDecl *Parm = ParmVarDecl::Create(
+            Context, Alloc, SourceLocation(), SourceLocation(), nullptr, PT,
+            /*TInfo=*/nullptr, SC_None, nullptr);
+        Parm->setImplicit();
+        ParamDecls.push_back(Parm);
+      }
+      Alloc->setParams(ParamDecls);
+      Context.getTranslationUnitDecl()->addDecl(Alloc);
+    }
+  }
+
   if (getLangOpts().CPlusPlusModules && getCurrentModule())
     PopGlobalModuleFragment();
 }

@@ -32,7 +32,6 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IntrinsicsWebAssembly.h"
 #include "llvm/IR/IntrinsicsX86.h"
 #include "llvm/IR/MatrixBuilder.h"
 #include "llvm/Support/ConvertUTF.h"
@@ -2930,89 +2929,6 @@ private:
 
 } // namespace
 
-//===----------------------------------------------------------------------===//
-// WebAssembly externref table copies.
-//===----------------------------------------------------------------------===//
-
-/// Returns true if \p Arg, looking through parentheses and casts (typically
-/// the implicit or explicit conversion to void* at a memcpy call), denotes a
-/// pointer to (or an array of) WebAssembly externref. Such a pointer is an
-/// index into the linker-synthesized __externref_table, not a linear-memory
-/// address, so byte-oriented memory intrinsics on it must be lowered to
-/// table.copy / table.fill instead.
-static bool isWasmExternrefPointerArg(const ASTContext &Ctx, const Expr *Arg) {
-  if (!Ctx.getTargetInfo().getTriple().isWasm())
-    return false;
-  auto pointsToExternref = [&](QualType T) {
-    if (const auto *PT = T->getAs<clang::PointerType>())
-      T = PT->getPointeeType();
-    else if (!T->isArrayType())
-      return false;
-    return Ctx.getBaseElementType(T)->isWebAssemblyExternrefType();
-  };
-  const Expr *E = Arg->IgnoreParens();
-  while (true) {
-    if (pointsToExternref(E->getType()))
-      return true;
-    const auto *CE = dyn_cast<CastExpr>(E);
-    if (!CE)
-      return false;
-    E = CE->getSubExpr()->IgnoreParens();
-  }
-}
-
-/// Returns the linker-synthesized __externref_table as an IR global (a
-/// zero-length array of externref in the wasm variable address space), which
-/// is how the table.* intrinsics name their table operand.
-static llvm::Value *getWasmExternrefTable(CodeGenModule &CGM) {
-  llvm::Module &M = CGM.getModule();
-  StringRef Name = "__externref_table";
-  if (llvm::GlobalVariable *GV = M.getNamedGlobal(Name))
-    return GV;
-  llvm::Type *ExternrefTy = llvm::Type::getWasm_ExternrefTy(M.getContext());
-  return new llvm::GlobalVariable(
-      M, llvm::ArrayType::get(ExternrefTy, 0), /*isConstant=*/false,
-      llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr, Name,
-      /*InsertBefore=*/nullptr, llvm::GlobalValue::NotThreadLocal,
-      /*AddressSpace=*/1);
-}
-
-/// Converts an externref pointer (a zero-extended slot index) or a slot count
-/// to the i32 the table instructions take.
-static llvm::Value *toWasmTableIndex(CodeGenFunction &CGF, llvm::Value *V) {
-  if (V->getType()->isPointerTy())
-    V = CGF.Builder.CreatePtrToInt(V, CGF.IntPtrTy);
-  return CGF.Builder.CreateIntCast(V, CGF.Int32Ty, /*isSigned=*/false);
-}
-
-/// Lowers memcpy/memmove(dst, src, n) between externref pointers to
-/// `table.copy __externref_table, __externref_table, dst, src, n`. Since
-/// sizeof(__externref_t) is 1, the byte count is the slot count. table.copy
-/// handles overlapping ranges, so it serves both memcpy and memmove.
-static void EmitWasmExternrefTableCopy(CodeGenFunction &CGF, llvm::Value *Dst,
-                                       llvm::Value *Src, llvm::Value *Size) {
-  llvm::Value *Table = getWasmExternrefTable(CGF.CGM);
-  llvm::Function *Callee =
-      CGF.CGM.getIntrinsic(llvm::Intrinsic::wasm_table_copy);
-  CGF.Builder.CreateCall(Callee, {Table, Table, toWasmTableIndex(CGF, Dst),
-                                  toWasmTableIndex(CGF, Src),
-                                  toWasmTableIndex(CGF, Size)});
-}
-
-/// Lowers memset(dst, 0, n) on an externref pointer to
-/// `table.fill __externref_table, dst, ref.null, n`. Only a zero byte value
-/// has a meaning for externrefs (the null reference).
-static void EmitWasmExternrefTableClear(CodeGenFunction &CGF, llvm::Value *Dst,
-                                        llvm::Value *Size) {
-  llvm::Value *Table = getWasmExternrefTable(CGF.CGM);
-  llvm::Value *Null = CGF.Builder.CreateCall(
-      CGF.CGM.getIntrinsic(llvm::Intrinsic::wasm_ref_null_extern));
-  llvm::Function *Callee =
-      CGF.CGM.getIntrinsic(llvm::Intrinsic::wasm_table_fill_externref);
-  CGF.Builder.CreateCall(Callee, {Table, toWasmTableIndex(CGF, Dst), Null,
-                                  toWasmTableIndex(CGF, Size)});
-}
-
 RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
                                         const CallExpr *E,
                                         ReturnValueSlot ReturnValue) {
@@ -5138,16 +5054,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Address Dest = EmitPointerWithAlignment(E->getArg(0));
     Address Src = EmitPointerWithAlignment(E->getArg(1));
     Value *SizeVal = EmitScalarExpr(E->getArg(2));
-    if (isWasmExternrefPointerArg(getContext(), E->getArg(0)) ||
-        isWasmExternrefPointerArg(getContext(), E->getArg(1))) {
-      EmitWasmExternrefTableCopy(*this, Dest.emitRawPointer(*this),
-                                 Src.emitRawPointer(*this), SizeVal);
-      if (BuiltinID == Builtin::BImempcpy ||
-          BuiltinID == Builtin::BI__builtin_mempcpy)
-        return RValue::get(Builder.CreateInBoundsGEP(
-            Int8Ty, Dest.emitRawPointer(*this), SizeVal));
-      return RValue::get(Dest, *this);
-    }
     EmitArgCheck(TCK_Store, Dest, E->getArg(0), 0);
     EmitArgCheck(TCK_Load, Src, E->getArg(1), 1);
     auto *I = Builder.CreateMemCpy(Dest, Src, SizeVal, false);
@@ -5165,13 +5071,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Address Src = EmitPointerWithAlignment(E->getArg(1));
     uint64_t Size =
         E->getArg(2)->EvaluateKnownConstInt(getContext()).getZExtValue();
-    if (isWasmExternrefPointerArg(getContext(), E->getArg(0)) ||
-        isWasmExternrefPointerArg(getContext(), E->getArg(1))) {
-      EmitWasmExternrefTableCopy(*this, Dest.emitRawPointer(*this),
-                                 Src.emitRawPointer(*this),
-                                 llvm::ConstantInt::get(SizeTy, Size));
-      return RValue::get(nullptr);
-    }
     EmitArgCheck(TCK_Store, Dest, E->getArg(0), 0);
     EmitArgCheck(TCK_Load, Src, E->getArg(1), 1);
     auto *I = Builder.CreateMemCpyInline(Dest, Src, Size);
@@ -5242,12 +5141,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
               getContext()
                   .getTypeSizeInChars(E->getArg(0)->getType()->getPointeeType())
                   .getQuantity()));
-    if (isWasmExternrefPointerArg(getContext(), E->getArg(0)) ||
-        isWasmExternrefPointerArg(getContext(), E->getArg(1))) {
-      EmitWasmExternrefTableCopy(*this, Dest.emitRawPointer(*this),
-                                 Src.emitRawPointer(*this), SizeVal);
-      return RValue::get(Dest, *this);
-    }
     EmitArgCheck(TCK_Store, Dest, E->getArg(0), 0);
     EmitArgCheck(TCK_Load, Src, E->getArg(1), 1);
     auto *I = Builder.CreateMemMove(Dest, Src, SizeVal, false);
@@ -5260,17 +5153,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     Value *ByteVal = Builder.CreateTrunc(EmitScalarExpr(E->getArg(1)),
                                          Builder.getInt8Ty());
     Value *SizeVal = EmitScalarExpr(E->getArg(2));
-    if (isWasmExternrefPointerArg(getContext(), E->getArg(0))) {
-      // Only clearing to the null reference is meaningful for externrefs.
-      auto *C = dyn_cast<llvm::ConstantInt>(ByteVal);
-      if (!C || !C->isZero()) {
-        CGM.ErrorUnsupported(E, "memset of WebAssembly externrefs to a "
-                                "non-zero value");
-        return RValue::get(Dest, *this);
-      }
-      EmitWasmExternrefTableClear(*this, Dest.emitRawPointer(*this), SizeVal);
-      return RValue::get(Dest, *this);
-    }
     EmitNonNullArgCheck(Dest, E->getArg(0)->getType(),
                         E->getArg(0)->getExprLoc(), FD, 0);
     auto *I = Builder.CreateMemSet(Dest, ByteVal, SizeVal, false);

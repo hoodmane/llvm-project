@@ -3053,6 +3053,11 @@ bool Sema::IsPointerConversion(Expr *From, QualType FromType, QualType ToType,
                                QualType& ConvertedType,
                                bool &IncompatibleObjC) {
   IncompatibleObjC = false;
+  // A pointer to a WebAssembly externref never converts to or from any other
+  // pointer type, void * included; null pointer constants are handled by the
+  // caller before we get here.
+  if (checkWasmExternrefPointerConversion(FromType, ToType, SourceLocation()))
+    return false;
   if (isObjCPointerConversion(FromType, ToType, ConvertedType,
                               IncompatibleObjC))
     return true;
@@ -3641,6 +3646,35 @@ bool Sema::FunctionNonObjectParamTypesAreEqual(const FunctionDecl *OldFunction,
   return FunctionParamTypesAreEqual(OldPT->param_types().slice(OldIgnore),
                                     NewPT->param_types().slice(NewIgnore),
                                     ArgPos, Reversed);
+}
+
+bool Sema::checkWasmExternrefPointerConversion(QualType From, QualType To,
+                                               SourceLocation Loc,
+                                               SourceRange Range) {
+  if (!Context.getTargetInfo().getTriple().isWasm())
+    return false;
+  // Look through references so this can also be used for reference binding
+  // and pointer-to-array types.
+  auto Pointee = [&](QualType T) -> QualType {
+    T = T.getNonReferenceType();
+    if (const auto *PT = T->getAs<PointerType>())
+      return PT->getPointeeType();
+    return QualType();
+  };
+  QualType FromPointee = Pointee(From), ToPointee = Pointee(To);
+  if (FromPointee.isNull() || ToPointee.isNull())
+    return false;
+  bool FromRef =
+      Context.getBaseElementType(FromPointee)->isWebAssemblyExternrefType();
+  bool ToRef =
+      Context.getBaseElementType(ToPointee)->isWebAssemblyExternrefType();
+  if (FromRef == ToRef)
+    return false;
+  if (Loc.isValid())
+    Diag(Loc, diag::err_wasm_externref_pointer_conversion)
+        << ToRef << (ToRef ? ToPointee : FromPointee).getUnqualifiedType()
+        << Range;
+  return true;
 }
 
 bool Sema::CheckPointerConversion(Expr *From, QualType ToType,

@@ -102,6 +102,33 @@ void funcref_uses(funcref_t fr) {
   &fr; // expected-error {{cannot take address of WebAssembly reference}}
 }
 
+// A pointer to an externref is an externref table slot index, not a
+// linear-memory address, so it never converts to or from another pointer type
+// (void * included), in either direction, implicitly or by cast. Null pointer
+// constants and cv changes are fine.
+void takes_void(void *);          // conly-note {{passing argument to parameter here}} cpp-note {{candidate function not viable}}
+void takes_ref(__externref_t *);  // conly-note {{passing argument to parameter here}} cpp-note {{candidate function not viable}}
+void takes_const_ref(const __externref_t *);
+void pointer_conversions(__externref_t *p, void *vp, int *ip, char *cp,
+                         __externref_t (*ap)[3], __externref_t **pp) {
+  vp = p;                       // expected-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t'}}
+  p = vp;                       // expected-error {{cannot convert to a pointer to WebAssembly reference type '__externref_t'}}
+  ip = (int *)p;                // expected-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t'}}
+  p = (__externref_t *)ip;      // expected-error {{cannot convert to a pointer to WebAssembly reference type '__externref_t'}}
+  cp = (char *)ap;              // expected-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t[3]'}}
+  takes_void(p);                // conly-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t'}} cpp-error {{no matching function for call to 'takes_void'}}
+  takes_ref(vp);                // conly-error {{cannot convert to a pointer to WebAssembly reference type '__externref_t'}} cpp-error {{no matching function for call to 'takes_ref'}}
+  takes_ref(0);
+#ifndef __cplusplus
+  takes_ref((void *)0); // a null pointer constant in C
+#endif
+  takes_const_ref(p);
+  takes_ref(*ap);
+  vp = pp;                      // a pointer to an externref pointer lives in linear memory
+  pp = (__externref_t **)vp;
+  p = (__externref_t *)(const __externref_t *)p;
+}
+
 // Pointers to externref behave like ordinary pointers in unary and binary
 // expressions (unlike tables, which are rejected below in func()).
 int pointer_exprs(__externref_t *p, __externref_t *q) {
@@ -128,8 +155,8 @@ int pointer_exprs(__externref_t *p, __externref_t *q) {
 __externref_t func(__externref_t ref) {
   &ref;
   int foo = 40;
-  (__externref_t *)(&foo);
-  (__externref_t ****)(&foo);
+  (__externref_t *)(&foo);    // expected-error {{cannot convert to a pointer to WebAssembly reference type '__externref_t'; a pointer to a reference type is an externref table slot index, not a linear-memory address}}
+  (__externref_t ****)(&foo); // a pointer to a pointer is an ordinary pointer
   // An externref pointer is an externref table slot index with one slot per
   // element, so sizeof and alignof are both 1 (and arrays scale by count).
   _Static_assert(sizeof(ref) == 1, "");

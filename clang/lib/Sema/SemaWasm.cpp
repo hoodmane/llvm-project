@@ -286,6 +286,88 @@ bool SemaWasm::BuiltinWasmTestFunctionPointerSignature(const TargetInfo &TI,
   return false;
 }
 
+/// Checks that argument \p ArgIndex is a pointer to (an array of) externref,
+/// performing the usual argument conversions on it.
+static bool CheckWasmBuiltinArgIsExternrefPointer(Sema &S, CallExpr *E,
+                                                  unsigned ArgIndex) {
+  ExprResult Arg = S.DefaultFunctionArrayLvalueConversion(E->getArg(ArgIndex));
+  if (Arg.isInvalid())
+    return true;
+  E->setArg(ArgIndex, Arg.get());
+  QualType T = Arg.get()->getType();
+  const auto *PT = T->getAs<PointerType>();
+  if (!PT || !S.Context.getBaseElementType(PT->getPointeeType())
+                  ->isWebAssemblyExternrefType()) {
+    S.Diag(Arg.get()->getBeginLoc(),
+           diag::err_wasm_builtin_arg_must_be_externref_pointer)
+        << ArgIndex + 1 << T << Arg.get()->getSourceRange();
+    return true;
+  }
+  return false;
+}
+
+/// Converts argument \p ArgIndex to size_t.
+static bool ConvertWasmBuiltinArgToSizeT(Sema &S, CallExpr *E,
+                                         unsigned ArgIndex) {
+  if (CheckWasmBuiltinArgIsInteger(S, E, ArgIndex))
+    return true;
+  ExprResult Arg = S.PerformImplicitConversion(
+      E->getArg(ArgIndex), S.Context.getSizeType(),
+      AssignmentAction::Passing);
+  if (Arg.isInvalid())
+    return true;
+  E->setArg(ArgIndex, Arg.get());
+  return false;
+}
+
+// void __builtin_wasm_externref_copy(__externref_t *dst,
+//                                    const __externref_t *src, size_t n);
+bool SemaWasm::BuiltinWasmExternrefCopy(CallExpr *TheCall) {
+  if (SemaRef.checkArgCount(TheCall, 3))
+    return true;
+  if (CheckWasmBuiltinArgIsExternrefPointer(SemaRef, TheCall, 0) ||
+      CheckWasmBuiltinArgIsExternrefPointer(SemaRef, TheCall, 1) ||
+      ConvertWasmBuiltinArgToSizeT(SemaRef, TheCall, 2))
+    return true;
+  if (TheCall->getArg(0)->getType()->getPointeeType().isConstQualified()) {
+    SemaRef.Diag(TheCall->getArg(0)->getBeginLoc(),
+                 diag::err_wasm_builtin_arg_const_externref_pointer)
+        << TheCall->getArg(0)->getSourceRange();
+    return true;
+  }
+  TheCall->setType(getASTContext().VoidTy);
+  return false;
+}
+
+// void __builtin_wasm_externref_fill(__externref_t *dst, __externref_t val,
+//                                    size_t n);
+bool SemaWasm::BuiltinWasmExternrefFill(CallExpr *TheCall) {
+  if (SemaRef.checkArgCount(TheCall, 3))
+    return true;
+  if (CheckWasmBuiltinArgIsExternrefPointer(SemaRef, TheCall, 0))
+    return true;
+  ExprResult Val = SemaRef.DefaultLvalueConversion(TheCall->getArg(1));
+  if (Val.isInvalid())
+    return true;
+  TheCall->setArg(1, Val.get());
+  if (!Val.get()->getType().isWebAssemblyExternrefType()) {
+    SemaRef.Diag(Val.get()->getBeginLoc(),
+                 diag::err_wasm_builtin_arg_must_be_externref_type)
+        << 2 << Val.get()->getSourceRange();
+    return true;
+  }
+  if (ConvertWasmBuiltinArgToSizeT(SemaRef, TheCall, 2))
+    return true;
+  if (TheCall->getArg(0)->getType()->getPointeeType().isConstQualified()) {
+    SemaRef.Diag(TheCall->getArg(0)->getBeginLoc(),
+                 diag::err_wasm_builtin_arg_const_externref_pointer)
+        << TheCall->getArg(0)->getSourceRange();
+    return true;
+  }
+  TheCall->setType(getASTContext().VoidTy);
+  return false;
+}
+
 bool SemaWasm::CheckWebAssemblyBuiltinFunctionCall(const TargetInfo &TI,
                                                    unsigned BuiltinID,
                                                    CallExpr *TheCall) {
@@ -308,6 +390,10 @@ bool SemaWasm::CheckWebAssemblyBuiltinFunctionCall(const TargetInfo &TI,
     return BuiltinWasmTableFill(TheCall);
   case WebAssembly::BI__builtin_wasm_table_copy:
     return BuiltinWasmTableCopy(TheCall);
+  case WebAssembly::BI__builtin_wasm_externref_copy:
+    return BuiltinWasmExternrefCopy(TheCall);
+  case WebAssembly::BI__builtin_wasm_externref_fill:
+    return BuiltinWasmExternrefFill(TheCall);
   case WebAssembly::BI__builtin_wasm_test_function_pointer_signature:
     return BuiltinWasmTestFunctionPointerSignature(TI, TheCall);
   }

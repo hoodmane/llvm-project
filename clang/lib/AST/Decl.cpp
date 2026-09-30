@@ -3396,8 +3396,15 @@ bool FunctionDecl::isReservedGlobalPlacementOperator() const {
           ->getASTContext();
 
   // The result type and first argument type are constant across all
-  // these operators.  The second argument must be exactly void*.
-  return (proto->getParamType(1).getCanonicalType() == Context.VoidPtrTy);
+  // these operators.  The second argument must be exactly void*, or on
+  // WebAssembly a pointer to an externref (which cannot convert to void*), for
+  // the implicit non-allocating form that constructs into a table slot.
+  QualType Second = proto->getParamType(1).getCanonicalType();
+  if (Second == Context.VoidPtrTy)
+    return true;
+  if (const auto *PT = Second->getAs<PointerType>())
+    return isImplicit() && PT->getPointeeType()->isWebAssemblyExternrefType();
+  return false;
 }
 
 bool FunctionDecl::isUsableAsGlobalAllocationFunctionInConstantEvaluation(

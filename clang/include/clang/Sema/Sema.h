@@ -732,6 +732,11 @@ enum class AssignConvertType {
   /// c/v/r qualifiers, which we accept as an extension.
   CompatiblePointerDiscardsQualifiers,
 
+  /// IncompatibleWasmExternrefPointer - The assignment converts between a
+  /// pointer to a WebAssembly externref (a table slot index) and a pointer to
+  /// something else, void * included. Always an error.
+  IncompatibleWasmExternrefPointer,
+
   /// IncompatiblePointerDiscardsQualifiers - The assignment
   /// discards qualifiers that we don't permit to be discarded,
   /// like address spaces.
@@ -10309,6 +10314,16 @@ public:
   /// conversions for which IsPointerConversion has already returned
   /// true. It returns true and produces a diagnostic if there was an
   /// error, or returns false otherwise.
+  /// Diagnose (and return true for) a conversion between a pointer to a
+  /// WebAssembly externref and a pointer to anything else. Such a pointer is an
+  /// externref table slot index rather than a linear-memory address, so it
+  /// must never be mixed with ordinary pointers in either direction (not even
+  /// via void *). Cv changes and null pointer constants are fine. \p Loc may
+  /// be invalid to only query.
+  bool checkWasmExternrefPointerConversion(QualType From, QualType To,
+                                           SourceLocation Loc,
+                                           SourceRange Range = SourceRange());
+
   bool CheckPointerConversion(Expr *From, QualType ToType, CastKind &Kind,
                               CXXCastPath &BasePath, bool IgnoreBaseAccess,
                               bool Diagnose = true);

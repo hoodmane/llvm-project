@@ -216,6 +216,13 @@ TARGET_BUILTIN(__builtin_wasm_table_size, "zv*", "nt", "reference-types")
 TARGET_BUILTIN(__builtin_wasm_table_grow, "iv*v*1i", "nt", "reference-types")
 TARGET_BUILTIN(__builtin_wasm_table_fill, "vv*iv*1i", "t", "reference-types")
 TARGET_BUILTIN(__builtin_wasm_table_copy, "vv*v*iii", "t", "reference-types")
+// Copy / fill runs of externref table slots through externref pointers (the
+// externref analogs of memmove and memset; externref pointers cannot be passed
+// to those since they are slot indices, not linear-memory addresses).
+//   void __builtin_wasm_externref_copy(__externref_t *dst, const __externref_t *src, size_t n);
+//   void __builtin_wasm_externref_fill(__externref_t *dst, __externref_t val, size_t n);
+TARGET_BUILTIN(__builtin_wasm_externref_copy, "v.", "nt", "reference-types")
+TARGET_BUILTIN(__builtin_wasm_externref_fill, "v.", "nt", "reference-types")
 
 #undef BUILTIN
 #undef TARGET_BUILTIN

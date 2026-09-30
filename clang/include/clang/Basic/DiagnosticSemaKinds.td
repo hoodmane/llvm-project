@@ -13907,6 +13907,14 @@ def err_wasm_table_must_be_static : Error<
   "WebAssembly table must be static">;
 def err_wasm_builtin_arg_must_be_table_type : Error <
   "%ordinal0 argument must be a WebAssembly table">;
+def err_wasm_builtin_arg_must_be_externref_pointer : Error <
+  "%ordinal0 argument must be a pointer to a WebAssembly externref; got %1">;
+def err_wasm_builtin_arg_const_externref_pointer : Error <
+  "destination must not be a pointer to const WebAssembly externref">;
+def err_wasm_externref_pointer_conversion : Error<
+  "cannot convert %select{from|to}0 a pointer to WebAssembly reference type "
+  "%1; a pointer to a reference type is an externref table slot index, not a "
+  "linear-memory address">;
 def err_wasm_externref_placement_new : Error<
   "placement new of WebAssembly reference type %0 with custom allocation "
   "arguments is not allowed; references live in the externref table, so only "

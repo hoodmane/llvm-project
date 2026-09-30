@@ -106,12 +106,11 @@ __externref_t *global_new() { return ::new __externref_t; }
 // CHECK-NOT: @_Zdl
 // CHECK-NOT: @_Zda
 
-// The reserved placement form constructs into an existing slot: the
-// initializer is stored through the placement pointer and nothing is
-// allocated. This is what std::construct_at expands to.
-typedef __SIZE_TYPE__ size_t;
-void *operator new(size_t, void *) noexcept;
-void *operator new[](size_t, void *) noexcept;
+// Placement new into an existing slot uses the implicitly declared
+// non-allocating `operator new(size_t, __externref_t *)` (an externref pointer
+// cannot convert to void *, so <new> is not needed): the initializer is stored
+// through the placement pointer and nothing is allocated. This is what
+// std::construct_at expands to.
 
 // CHECK-LABEL: define{{.*}} void @_Z9placementPu11externref_tu11externref_t(ptr noundef %slot, target("wasm.externref") %v)
 // CHECK-NOT:     __externref_table_alloc
@@ -122,7 +121,7 @@ void *operator new[](size_t, void *) noexcept;
 // CHECK-NOT:     __externref_table_alloc
 // CHECK:         ret void
 void placement(__externref_t *slot, __externref_t v) {
-  ::new (static_cast<void *>(slot)) __externref_t(v);
+  ::new (slot) __externref_t(v);
 }
 
 // Default-initialising placement new is a no-op besides evaluating the slot.

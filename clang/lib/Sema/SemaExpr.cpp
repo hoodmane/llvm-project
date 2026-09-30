@@ -9375,6 +9375,11 @@ static AssignConvertType checkPointerTypesForAssignment(Sema &S,
 
   AssignConvertType ConvTy = AssignConvertType::Compatible;
 
+  // A pointer to a WebAssembly externref is a table slot index; it is not
+  // convertible to or from any other pointer type, void * included.
+  if (S.checkWasmExternrefPointerConversion(RHSType, LHSType, SourceLocation()))
+    return AssignConvertType::IncompatibleWasmExternrefPointer;
+
   // C99 6.5.16.1p1: This following citation is common to constraints
   // 3 & 4 (below). ...and the type *pointed to* by the left has all the
   // qualifiers of the type *pointed to* by the right;
@@ -17653,6 +17658,14 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
       DiagKind = diag::ext_typecheck_convert_pointer_void_func;
     }
     break;
+  case AssignConvertType::IncompatibleWasmExternrefPointer:
+    if (SrcType->canDecayToPointerType())
+      SrcType = Context.getDecayedType(SrcType);
+    checkWasmExternrefPointerConversion(SrcType, DstType, Loc,
+                                        SrcExpr->getSourceRange());
+    if (Complained)
+      *Complained = true;
+    return true;
   case AssignConvertType::IncompatiblePointerDiscardsQualifiers: {
     // Perform decay if necessary.
     if (SrcType->canDecayToPointerType())

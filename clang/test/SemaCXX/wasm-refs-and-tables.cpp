@@ -51,12 +51,13 @@ void new_delete(__externref_t v, int n) {
   delete static_cast<__externref_t **>(nullptr);
 }
 
-// The reserved placement form constructs into an existing table slot (this is
-// what std::construct_at uses); placement new with any other allocation
+// Placement new into an existing table slot uses an implicitly declared
+// non-allocating `operator new(size_t, __externref_t *)` (a pointer to an
+// externref cannot be converted to void *, so <new>'s form does not apply).
+// This is what std::construct_at uses. Placement new with any other allocation
 // arguments cannot be honoured.
 typedef __SIZE_TYPE__ size_t;
 void *operator new(size_t, void *) noexcept;
-void *operator new[](size_t, void *) noexcept;
 struct Arena {};
 void *operator new(size_t, Arena &);
 void *operator new[](size_t, Arena &);
@@ -64,12 +65,26 @@ void placement_new(__externref_t *slot, __externref_t v, int n, Arena &arena) {
   new (slot) __externref_t;
   new (slot) __externref_t(v);
   new (slot) __externref_t();
-  ::new (static_cast<void *>(slot)) __externref_t(v);
+  ::new (slot) __externref_t(v);
   new (slot) __externref_t[n];
   new (slot) __externref_t[2]{v, v};
+  ::new (static_cast<void *>(slot)) __externref_t(v); // expected-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t'}}
   new (arena) __externref_t;    // expected-error {{placement new of WebAssembly reference type '__externref_t' with custom allocation arguments is not allowed; references live in the externref table, so only placement new into an existing slot ('new (slot) T') is supported}}
   new (arena) __externref_t[n]; // expected-error {{placement new of WebAssembly reference type '__externref_t' with custom allocation arguments is not allowed}}
   new (buf) int;                // unrelated types are unaffected
+}
+
+// The same conversion rules apply to C++ casts.
+void cxx_pointer_conversions(__externref_t *p, void *vp, int *ip) {
+  vp = static_cast<void *>(p);              // expected-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t'}}
+  p = static_cast<__externref_t *>(vp);     // expected-error {{cannot convert to a pointer to WebAssembly reference type '__externref_t'}}
+  ip = reinterpret_cast<int *>(p);          // expected-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t'}}
+  p = reinterpret_cast<__externref_t *>(ip); // expected-error {{cannot convert to a pointer to WebAssembly reference type '__externref_t'}}
+  vp = (void *)p;                           // expected-error {{cannot convert from a pointer to WebAssembly reference type '__externref_t'}}
+  p = nullptr;
+  const __externref_t *cp = p;
+  p = const_cast<__externref_t *>(cp);
+  (void)vp; (void)ip;
 }
 
 // Lambdas may capture an externref by reference (the closure then holds an

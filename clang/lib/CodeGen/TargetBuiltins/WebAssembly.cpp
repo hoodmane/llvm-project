@@ -670,6 +670,37 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
 
     return Builder.CreateCall(Callee, {TableX, TableY, SrcIdx, DstIdx, NElems});
   }
+  case WebAssembly::BI__builtin_wasm_externref_copy:
+  case WebAssembly::BI__builtin_wasm_externref_fill: {
+    // Externref pointers are __externref_table slot indices, so these are
+    // table.copy / table.fill on the linker-synthesized table. Slot indices
+    // and counts are i32 regardless of pointer width.
+    llvm::Module &M = CGM.getModule();
+    llvm::GlobalVariable *Table = M.getNamedGlobal("__externref_table");
+    if (!Table) {
+      llvm::Type *ExternrefTy = llvm::Type::getWasm_ExternrefTy(M.getContext());
+      Table = new llvm::GlobalVariable(
+          M, llvm::ArrayType::get(ExternrefTy, 0), /*isConstant=*/false,
+          llvm::GlobalValue::ExternalLinkage, /*Initializer=*/nullptr,
+          "__externref_table", /*InsertBefore=*/nullptr,
+          llvm::GlobalValue::NotThreadLocal, /*AddressSpace=*/1);
+    }
+    auto ToIndex = [&](Value *V) {
+      if (V->getType()->isPointerTy())
+        V = Builder.CreatePtrToInt(V, IntPtrTy);
+      return Builder.CreateIntCast(V, Int32Ty, /*isSigned=*/false);
+    };
+    Value *Dst = ToIndex(EmitScalarExpr(E->getArg(0)));
+    Value *SrcOrVal = EmitScalarExpr(E->getArg(1));
+    Value *NElems = ToIndex(EmitScalarExpr(E->getArg(2)));
+    if (BuiltinID == WebAssembly::BI__builtin_wasm_externref_copy) {
+      Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_table_copy);
+      return Builder.CreateCall(Callee,
+                                {Table, Table, Dst, ToIndex(SrcOrVal), NElems});
+    }
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_table_fill_externref);
+    return Builder.CreateCall(Callee, {Table, Dst, SrcOrVal, NElems});
+  }
   default:
     return nullptr;
   }
