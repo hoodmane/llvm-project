@@ -319,6 +319,13 @@ public:  // These are internal details of CGT that shouldn't be used externally.
   bool isLongDoubleReferenced() const { return LongDoubleReferenced; }
   bool isRecordLayoutComplete(const Type *Ty) const;
   unsigned getTargetAddressSpace(QualType T) const;
+
+  /// The LangAS an object of type \p T is addressed through: for a WebAssembly
+  /// externref object (or array of them) that is the externref-pointer address
+  /// space, otherwise \p T's own address space.
+  LangAS getStorageLangAS(QualType T) const {
+    return getContext().getPointeeAddressSpace(T);
+  }
 };
 
 }  // end namespace CodeGen

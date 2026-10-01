@@ -4,9 +4,9 @@
 // RUN: %clang_cc1 %s -triple wasm32-unknown-unknown -target-feature +reference-types -S -o - -std=c++17 -O1 | FileCheck %s --check-prefix=ASM
 
 // A pointer to an externref is an __externref_table slot index, not a
-// linear-memory address, so it cannot be passed to memcpy / memmove / memset
-// (it does not even convert to void *). Bulk copies and fills of externref
-// slots go through dedicated builtins that lower to table.copy / table.fill on
+// linear-memory address (in IR it is a `ptr addrspace(2)`), so bulk copies and
+// fills of externref slots go through dedicated builtins - or memcpy & co.
+// called with externref pointers - that lower to table.copy / table.fill on
 // __externref_table. Slot indices and counts are i32 regardless of pointer
 // width; table.copy handles overlapping ranges.
 
@@ -14,16 +14,16 @@ typedef __SIZE_TYPE__ size_t;
 
 // CHECK: @__externref_table = external addrspace(1) global [0 x target("wasm.externref")]
 
-// CHECK-LABEL: define{{.*}} void @_Z4copyPu11externref_tPKu11externref_tm(ptr noundef %d, ptr noundef %s, {{i32|i64}} noundef %n)
-// CHECK:         [[D:%.*]] = load ptr, ptr %d.addr
-// W32:           [[DI:%.*]] = ptrtoint ptr [[D]] to i32
-// W64:           [[DI64:%.*]] = ptrtoint ptr [[D]] to i64
+// CHECK-LABEL: define{{.*}} void @_Z4copyPu11externref_tPKu11externref_tm(ptr addrspace(2) noundef %d, ptr addrspace(2) noundef %s, {{i32|i64}} noundef %n)
+// CHECK:         [[D:%.*]] = load ptr addrspace(2), ptr %d.addr
+// W32:           [[DI:%.*]] = ptrtoint ptr addrspace(2) [[D]] to i32
+// W64:           [[DI64:%.*]] = ptrtoint ptr addrspace(2) [[D]] to i64
 // W64:           [[DI:%.*]] = trunc i64 [[DI64]] to i32
-// CHECK:         [[S:%.*]] = load ptr, ptr %s.addr
+// CHECK:         [[S:%.*]] = load ptr addrspace(2), ptr %s.addr
 // CHECK:         [[N:%.*]] = load {{i32|i64}}, ptr %n.addr
 // W64:           [[N32:%.*]] = trunc i64 [[N]] to i32
-// W32:           [[SI:%.*]] = ptrtoint ptr [[S]] to i32
-// W64:           [[SI64:%.*]] = ptrtoint ptr [[S]] to i64
+// W32:           [[SI:%.*]] = ptrtoint ptr addrspace(2) [[S]] to i32
+// W64:           [[SI64:%.*]] = ptrtoint ptr addrspace(2) [[S]] to i64
 // W64:           [[SI:%.*]] = trunc i64 [[SI64]] to i32
 // W32:           call void @llvm.wasm.table.copy(ptr addrspace(1) @__externref_table, ptr addrspace(1) @__externref_table, i32 [[DI]], i32 [[SI]], i32 [[N]])
 // W64:           call void @llvm.wasm.table.copy(ptr addrspace(1) @__externref_table, ptr addrspace(1) @__externref_table, i32 [[DI]], i32 [[SI]], i32 [[N32]])

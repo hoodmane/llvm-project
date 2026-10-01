@@ -8,8 +8,9 @@ void helper(externref_t);
 // CHECK-LABEL: @handle(
 // CHECK-NEXT:  entry:
 // CHECK-NEXT:    [[OBJ_ADDR:%.*]] = alloca target("wasm.externref"), align 1
-// CHECK-NEXT:    store target("wasm.externref") [[OBJ:%.*]], ptr [[OBJ_ADDR]], align 1
-// CHECK-NEXT:    [[TMP0:%.*]] = load target("wasm.externref"), ptr [[OBJ_ADDR]], align 1
+// CHECK-NEXT:    [[OBJ_ADDR_ASCAST:%.*]] = addrspacecast ptr [[OBJ_ADDR]] to ptr addrspace(2)
+// CHECK-NEXT:    store target("wasm.externref") [[OBJ:%.*]], ptr addrspace(2) [[OBJ_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    [[TMP0:%.*]] = load target("wasm.externref"), ptr addrspace(2) [[OBJ_ADDR_ASCAST]], align 1
 // CHECK-NEXT:    call void @helper(target("wasm.externref") [[TMP0]])
 // CHECK-NEXT:    ret void
 //

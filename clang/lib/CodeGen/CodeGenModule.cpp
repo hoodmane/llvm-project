@@ -5980,8 +5980,12 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName, llvm::Type *Ty,
   if (D)
     SanitizerMD->reportGlobal(GV, *D);
 
+  // The address space the program addresses this variable through. For a
+  // WebAssembly externref object that is the externref-pointer address space
+  // (its address is an __externref_table slot index), while the global itself
+  // stays in the default address space for the linker to allocate its slot.
   LangAS ExpectedAS =
-      D ? D->getType().getAddressSpace()
+      D ? getTypes().getStorageLangAS(D->getType())
         : (LangOpts.OpenCL ? LangAS::opencl_global : LangAS::Default);
   assert(getContext().getTargetAddressSpace(ExpectedAS) == TargetAS);
   if (DAddrSpace != ExpectedAS)
@@ -6073,7 +6077,8 @@ llvm::Constant *CodeGenModule::GetAddrOfGlobalVar(const VarDecl *D,
     Ty = getTypes().ConvertTypeForMem(ASTTy);
 
   StringRef MangledName = getMangledName(D);
-  return GetOrCreateLLVMGlobal(MangledName, Ty, ASTTy.getAddressSpace(), D,
+  return GetOrCreateLLVMGlobal(MangledName, Ty,
+                               getTypes().getStorageLangAS(ASTTy), D,
                                IsForDefinition);
 }
 

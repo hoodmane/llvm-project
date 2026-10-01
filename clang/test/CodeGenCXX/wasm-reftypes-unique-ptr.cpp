@@ -3,8 +3,8 @@
 // RUN: %clang_cc1 %s -triple wasm64-unknown-unknown -target-feature +reference-types -emit-llvm -o - -std=c++11 -disable-llvm-passes | FileCheck %s
 
 // An __externref_t can be owned by a unique_ptr-like smart pointer: the
-// pointer member is an ordinary (linear-memory) __externref_t *, i.e. an
-// __externref_table slot index, so the class itself is a normal 4-byte struct.
+// pointer member is an __externref_t *, i.e. an __externref_table slot index
+// (`ptr addrspace(2)` in IR) stored in an ordinary linear-memory struct.
 // `new __externref_t` inside make_unique allocates a table slot via the
 // compiler-rt allocator, `delete` in default_delete releases it, and `*ptr`
 // yields an __externref_t& that loads/stores through the slot.
@@ -95,22 +95,22 @@ int main() {
 }
 
 // The unique_ptr<__externref_t> is a plain struct holding one pointer.
-// CHECK: %"class.std::unique_ptr" = type { ptr }
+// CHECK: %"class.std::unique_ptr" = type { ptr addrspace(2) }
 
 // Dereferencing the owned pointer reads the externref out of its table slot.
 // CHECK-LABEL: define{{.*}} void @_Z7consumeSt10unique_ptrIu11externref_tSt14default_deleteIu11externref_tEE(ptr noundef %r)
-// CHECK:         [[REF:%.*]] = call {{.*}} ptr @_ZNKSt10unique_ptrIu11externref_tSt14default_deleteIu11externref_tEEdeEv(
-// CHECK:         load target("wasm.externref"), ptr [[REF]], align 1
+// CHECK:         [[REF:%.*]] = call {{.*}} ptr addrspace(2) @_ZNKSt10unique_ptrIu11externref_tSt14default_deleteIu11externref_tEEdeEv(
+// CHECK:         load target("wasm.externref"), ptr addrspace(2) [[REF]], align 1
 
 // make_unique<__externref_t> allocates one table slot; no operator new.
 // CHECK-LABEL: define{{.*}} void @_ZSt11make_uniqueIu11externref_tESt10unique_ptrIT_St14default_deleteIS1_EEv(
-// CHECK:         call ptr @__externref_table_alloc({{i32|i64}} 1)
+// CHECK:         call ptr addrspace(2) @__externref_table_alloc({{i32|i64}} 1)
 // CHECK-NOT:     @_Znw
-// CHECK:       declare {{.*}} ptr @__externref_table_alloc({{i32|i64}} noundef)
+// CHECK:       declare {{.*}} ptr addrspace(2) @__externref_table_alloc({{i32|i64}} noundef)
 
 // default_delete<__externref_t> releases the slot; no operator delete.
 // CHECK-LABEL: define{{.*}} void @_ZNKSt14default_deleteIu11externref_tEclEPu11externref_t(
-// CHECK:         call void @__externref_table_free(ptr %{{.*}})
+// CHECK:         call void @__externref_table_free(ptr addrspace(2) %{{.*}})
 // CHECK-NOT:     @_Zdl
-// CHECK:       declare void @__externref_table_free(ptr noundef)
+// CHECK:       declare void @__externref_table_free(ptr addrspace(2) noundef)
 

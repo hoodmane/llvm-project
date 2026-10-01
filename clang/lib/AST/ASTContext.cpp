@@ -2458,12 +2458,12 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
   case Type::RValueReference:
     // alignof and sizeof should never enter this code path here, so we go
     // the pointer route.
-    AS = cast<ReferenceType>(T)->getPointeeType().getAddressSpace();
+    AS = getPointeeAddressSpace(cast<ReferenceType>(T)->getPointeeType());
     Width = Target->getPointerWidth(AS);
     Align = Target->getPointerAlign(AS);
     break;
   case Type::Pointer:
-    AS = cast<PointerType>(T)->getPointeeType().getAddressSpace();
+    AS = getPointeeAddressSpace(cast<PointerType>(T)->getPointeeType());
     Width = Target->getPointerWidth(AS);
     Align = Target->getPointerAlign(AS);
     break;
@@ -4630,6 +4630,18 @@ ASTContext::getBuiltinVectorTypeInfo(const BuiltinType *Ty) const {
 
 /// getExternrefType - Return a WebAssembly externref type, which represents an
 /// opaque reference to a host value.
+bool ASTContext::isWebAssemblyExternrefPointee(QualType Pointee) const {
+  return !Pointee.isNull() && !Pointee->isDependentType() &&
+         !Pointee.hasAddressSpace() && Target->getTriple().isWasm() &&
+         getBaseElementType(Pointee)->isWebAssemblyExternrefType();
+}
+
+LangAS ASTContext::getPointeeAddressSpace(QualType Pointee) const {
+  if (isWebAssemblyExternrefPointee(Pointee))
+    return getLangASFromTargetAS(WebAssemblyExternrefPtrAddressSpace);
+  return Pointee.getAddressSpace();
+}
+
 QualType ASTContext::getWebAssemblyExternrefType() const {
   if (Target->getTriple().isWasm() && Target->hasFeature("reference-types")) {
 #define WASM_REF_TYPE(Name, MangledName, Id, SingletonId, AS)                  \

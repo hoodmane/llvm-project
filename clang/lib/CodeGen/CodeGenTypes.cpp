@@ -942,7 +942,12 @@ unsigned CodeGenTypes::getTargetAddressSpace(QualType T) const {
   // function type without an address space qualifier, the
   // program address space is used. Otherwise, the target picks
   // the best address space based on the type information
-  return T->isFunctionType() && !T.hasAddressSpace()
-             ? getDataLayout().getProgramAddressSpace()
-             : getContext().getTargetAddressSpace(T.getAddressSpace());
+  if (T->isFunctionType() && !T.hasAddressSpace())
+    return getDataLayout().getProgramAddressSpace();
+  // On WebAssembly a pointer to an externref (or an array of them) is an
+  // __externref_table slot index, not a linear-memory address; such pointers
+  // live in their own address space so that IR keeps them apart from ordinary
+  // pointers (loads and stores through them are table.get / table.set).
+  return getContext().getTargetAddressSpace(
+      getContext().getPointeeAddressSpace(T));
 }

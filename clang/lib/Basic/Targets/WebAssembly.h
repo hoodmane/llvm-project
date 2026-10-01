@@ -136,6 +136,19 @@ private:
                  const std::vector<std::string> &FeaturesVec) const override;
   bool hasFeature(StringRef Feature) const final;
 
+  /// Pointers to externref (target address space 2, an __externref_table slot
+  /// index) are 32 bits wide on both wasm32 and wasm64.
+  uint64_t getPointerWidthV(LangAS AddrSpace) const final {
+    if (AddrSpace == getLangASFromTargetAS(2))
+      return 32;
+    return PointerWidth;
+  }
+  uint64_t getPointerAlignV(LangAS AddrSpace) const final {
+    if (AddrSpace == getLangASFromTargetAS(2))
+      return 32;
+    return PointerAlign;
+  }
+
   void setFeatureEnabled(llvm::StringMap<bool> &Features, StringRef Name,
                          bool Enabled) const final;
 

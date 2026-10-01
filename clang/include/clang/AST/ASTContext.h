@@ -1806,6 +1806,22 @@ public:
   /// Return a WebAssembly externref type.
   QualType getWebAssemblyExternrefType() const;
 
+  /// The target address space of a pointer to a WebAssembly externref: such a
+  /// pointer is an index into the externref table rather than a linear-memory
+  /// address. Must match WASM_ADDRESS_SPACE_EXTERNREF_PTR in LLVM.
+  static constexpr unsigned WebAssemblyExternrefPtrAddressSpace = 2;
+
+  /// Whether a pointer or reference to \p Pointee is a pointer to a
+  /// WebAssembly externref (or array of them). Such pointers are 32 bits wide
+  /// on every target and lower to the externref-pointer address space, even
+  /// though \p Pointee carries no address space qualifier in the AST.
+  bool isWebAssemblyExternrefPointee(QualType Pointee) const;
+
+  /// The address space a pointer or reference to \p Pointee addresses: the
+  /// pointee's own address space, or the externref-pointer address space for a
+  /// WebAssembly externref pointee.
+  LangAS getPointeeAddressSpace(QualType Pointee) const;
+
   /// Return the unique reference to a vector type of the specified
   /// element type and size.
   ///

@@ -203,8 +203,8 @@ RawAddress CodeGenFunction::CreateMemTemp(QualType Ty, CharUnits Align,
                                           const Twine &Name,
                                           RawAddress *Alloca) {
   RawAddress Result =
-      CreateTempAlloca(ConvertTypeForMem(Ty), Ty.getAddressSpace(), Align, Name,
-                       /*ArraySize=*/nullptr, Alloca);
+      CreateTempAlloca(ConvertTypeForMem(Ty), getTypes().getStorageLangAS(Ty),
+                       Align, Name, /*ArraySize=*/nullptr, Alloca);
 
   if (Ty->isConstantMatrixType()) {
     auto *ArrayTy = cast<llvm::ArrayType>(Result.getElementType());

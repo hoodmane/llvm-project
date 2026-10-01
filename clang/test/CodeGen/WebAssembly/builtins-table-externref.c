@@ -28,8 +28,13 @@ __externref_t test_builtin_wasm_table_get_const(const int index) {
 // CHECK-LABEL: define {{[^@]+}}@test_builtin_wasm_table_set
 // CHECK-SAME: (i32 noundef [[INDEX:%.*]], target("wasm.externref") [[REF:%.*]]) #[[ATTR0]] {
 // CHECK-NEXT:  entry:
-// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @const_table, i32 [[INDEX]], target("wasm.externref") [[REF]])
-// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @table, i32 [[INDEX]], target("wasm.externref") [[REF]])
+// CHECK-NEXT:    [[REF_ADDR:%.*]] = alloca target("wasm.externref"), align 1
+// CHECK-NEXT:    [[REF_ADDR_ASCAST:%.*]] = addrspacecast ptr [[REF_ADDR]] to ptr addrspace(2)
+// CHECK-NEXT:    store target("wasm.externref") [[REF]], ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    [[TMP0:%.*]] = load target("wasm.externref"), ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @const_table, i32 [[INDEX]], target("wasm.externref") [[TMP0]])
+// CHECK-NEXT:    [[TMP1:%.*]] = load target("wasm.externref"), ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @table, i32 [[INDEX]], target("wasm.externref") [[TMP1]])
 // CHECK-NEXT:    ret void
 //
 void test_builtin_wasm_table_set(const int index, __externref_t ref) {
@@ -40,8 +45,13 @@ void test_builtin_wasm_table_set(const int index, __externref_t ref) {
 // CHECK-LABEL: define {{[^@]+}}@test_builtin_wasm_table_set_const
 // CHECK-SAME: (i32 noundef [[INDEX:%.*]], target("wasm.externref") [[REF:%.*]]) #[[ATTR0]] {
 // CHECK-NEXT:  entry:
-// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @table, i32 [[INDEX]], target("wasm.externref") [[REF]])
-// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @const_table, i32 [[INDEX]], target("wasm.externref") [[REF]])
+// CHECK-NEXT:    [[REF_ADDR:%.*]] = alloca target("wasm.externref"), align 1
+// CHECK-NEXT:    [[REF_ADDR_ASCAST:%.*]] = addrspacecast ptr [[REF_ADDR]] to ptr addrspace(2)
+// CHECK-NEXT:    store target("wasm.externref") [[REF]], ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    [[TMP0:%.*]] = load target("wasm.externref"), ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @table, i32 [[INDEX]], target("wasm.externref") [[TMP0]])
+// CHECK-NEXT:    [[TMP1:%.*]] = load target("wasm.externref"), ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    call void @llvm.wasm.table.set.externref(ptr addrspace(1) @const_table, i32 [[INDEX]], target("wasm.externref") [[TMP1]])
 // CHECK-NEXT:    ret void
 //
 void test_builtin_wasm_table_set_const(const int index, const __externref_t ref) {
@@ -62,8 +72,12 @@ int test_builtin_wasm_table_size() {
 // CHECK-LABEL: define {{[^@]+}}@test_builtin_wasm_table_grow
 // CHECK-SAME: (target("wasm.externref") [[REF:%.*]], i32 noundef [[NELEM:%.*]]) #[[ATTR0]] {
 // CHECK-NEXT:  entry:
-// CHECK-NEXT:    [[TMP0:%.*]] = call i32 @llvm.wasm.table.grow.externref(ptr addrspace(1) @table, target("wasm.externref") [[REF]], i32 [[NELEM]])
-// CHECK-NEXT:    ret i32 [[TMP0]]
+// CHECK-NEXT:    [[REF_ADDR:%.*]] = alloca target("wasm.externref"), align 1
+// CHECK-NEXT:    [[REF_ADDR_ASCAST:%.*]] = addrspacecast ptr [[REF_ADDR]] to ptr addrspace(2)
+// CHECK-NEXT:    store target("wasm.externref") [[REF]], ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    [[TMP0:%.*]] = load target("wasm.externref"), ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    [[TMP1:%.*]] = call i32 @llvm.wasm.table.grow.externref(ptr addrspace(1) @table, target("wasm.externref") [[TMP0]], i32 [[NELEM]])
+// CHECK-NEXT:    ret i32 [[TMP1]]
 //
 int test_builtin_wasm_table_grow(__externref_t ref, int nelem) {
   return __builtin_wasm_table_grow(table, ref, nelem);
@@ -72,7 +86,11 @@ int test_builtin_wasm_table_grow(__externref_t ref, int nelem) {
 // CHECK-LABEL: define {{[^@]+}}@test_builtin_wasm_table_fill
 // CHECK-SAME: (i32 noundef [[INDEX:%.*]], target("wasm.externref") [[REF:%.*]], i32 noundef [[NELEM:%.*]]) #[[ATTR0]] {
 // CHECK-NEXT:  entry:
-// CHECK-NEXT:    call void @llvm.wasm.table.fill.externref(ptr addrspace(1) @table, i32 [[INDEX]], target("wasm.externref") [[REF]], i32 [[NELEM]])
+// CHECK-NEXT:    [[REF_ADDR:%.*]] = alloca target("wasm.externref"), align 1
+// CHECK-NEXT:    [[REF_ADDR_ASCAST:%.*]] = addrspacecast ptr [[REF_ADDR]] to ptr addrspace(2)
+// CHECK-NEXT:    store target("wasm.externref") [[REF]], ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    [[TMP0:%.*]] = load target("wasm.externref"), ptr addrspace(2) [[REF_ADDR_ASCAST]], align 1
+// CHECK-NEXT:    call void @llvm.wasm.table.fill.externref(ptr addrspace(1) @table, i32 [[INDEX]], target("wasm.externref") [[TMP0]], i32 [[NELEM]])
 // CHECK-NEXT:    ret void
 //
 void test_builtin_wasm_table_fill(int index, __externref_t ref, int nelem) {
