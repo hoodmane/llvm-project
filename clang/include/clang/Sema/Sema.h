@@ -10324,6 +10324,15 @@ public:
                                            SourceLocation Loc,
                                            SourceRange Range = SourceRange());
 
+  /// Returns true if \p FDecl is one of the bulk memory functions (memcpy,
+  /// memmove, memset, mempcpy, bzero and their __builtin_ forms) whose void *
+  /// parameters may, on WebAssembly, be bound to a pointer to externref;
+  /// CodeGen lowers such calls to table.copy / table.fill. If so, rewrites
+  /// externref-pointer arguments in \p Args to explicit casts to the
+  /// parameter type so that the normal conversion checks let them through.
+  void adjustWasmExternrefMemFunctionArgs(FunctionDecl *FDecl,
+                                          MutableArrayRef<Expr *> Args);
+
   bool CheckPointerConversion(Expr *From, QualType ToType, CastKind &Kind,
                               CXXCastPath &BasePath, bool IgnoreBaseAccess,
                               bool Diagnose = true);

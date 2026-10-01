@@ -6908,6 +6908,29 @@ ExprResult Sema::BuildCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
     }
   }
 
+  // On WebAssembly, let pointers to externref be passed to the bulk memory
+  // functions (memcpy & co.) even though they do not convert to void *; the
+  // calls are lowered to table.copy / table.fill. Do this before overload
+  // resolution so the (possibly overloaded) C library declaration is viable.
+  if (Context.getTargetInfo().getTriple().isWasm() &&
+      !Expr::hasAnyTypeDependentArguments(ArgExprs)) {
+    FunctionDecl *MemFn = nullptr;
+    if (Fn->getType() == Context.OverloadTy) {
+      OverloadExpr *Ovl = OverloadExpr::find(Fn).Expression;
+      for (NamedDecl *D : Ovl->decls())
+        if (auto *FD = dyn_cast<FunctionDecl>(D->getUnderlyingDecl()))
+          if (FD->getBuiltinID()) {
+            MemFn = FD;
+            break;
+          }
+    } else if (auto *DRE =
+                   dyn_cast<DeclRefExpr>(Fn->IgnoreParenImpCasts())) {
+      MemFn = dyn_cast<FunctionDecl>(DRE->getDecl());
+    }
+    if (MemFn)
+      adjustWasmExternrefMemFunctionArgs(MemFn, ArgExprs);
+  }
+
   // Check for overloaded calls.  This can happen even in C due to extensions.
   if (Fn->getType() == Context.OverloadTy) {
     OverloadExpr::FindResult find = OverloadExpr::find(Fn);

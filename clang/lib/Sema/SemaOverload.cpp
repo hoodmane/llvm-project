@@ -3677,6 +3677,86 @@ bool Sema::checkWasmExternrefPointerConversion(QualType From, QualType To,
   return true;
 }
 
+static bool isWasmExternrefMemFunction(const FunctionDecl *FD) {
+  if (!FD)
+    return false;
+  switch (FD->getBuiltinID()) {
+  case Builtin::BImemcpy:
+  case Builtin::BI__builtin_memcpy:
+  case Builtin::BImemmove:
+  case Builtin::BI__builtin_memmove:
+  case Builtin::BImemset:
+  case Builtin::BI__builtin_memset:
+  case Builtin::BImempcpy:
+  case Builtin::BI__builtin_mempcpy:
+  case Builtin::BIbzero:
+  case Builtin::BI__builtin_bzero:
+    return true;
+  default:
+    return false;
+  }
+}
+
+void Sema::adjustWasmExternrefMemFunctionArgs(FunctionDecl *FDecl,
+                                              MutableArrayRef<Expr *> Args) {
+  if (!Context.getTargetInfo().getTriple().isWasm() ||
+      !isWasmExternrefMemFunction(FDecl))
+    return;
+  const auto *Proto = FDecl->getType()->getAs<FunctionProtoType>();
+  if (!Proto)
+    return;
+  unsigned N = std::min<unsigned>(Args.size(), Proto->getNumParams());
+
+  // First pass: which void * parameters receive externref pointers?
+  SmallVector<bool, 3> IsRef(N, false);
+  SmallVector<bool, 3> IsVoidPtrParam(N, false);
+  bool AnyRef = false, AnyOther = false;
+  for (unsigned I = 0; I != N; ++I) {
+    const auto *ParamPtr = Proto->getParamType(I)->getAs<PointerType>();
+    if (!ParamPtr || !ParamPtr->getPointeeType()->isVoidType())
+      continue;
+    IsVoidPtrParam[I] = true;
+    ExprResult Arg = DefaultFunctionArrayLvalueConversion(Args[I]);
+    if (Arg.isInvalid())
+      return;
+    Args[I] = Arg.get();
+    const auto *ArgPtr = Arg.get()->getType()->getAs<PointerType>();
+    if (ArgPtr && Context.getBaseElementType(ArgPtr->getPointeeType())
+                      ->isWebAssemblyExternrefType()) {
+      IsRef[I] = true;
+      AnyRef = true;
+    } else if (!Arg.get()->isNullPointerConstant(
+                   Context, Expr::NPC_ValueDependentIsNull)) {
+      AnyOther = true;
+    }
+  }
+  if (!AnyRef)
+    return;
+
+  // Copying between an externref pointer and an ordinary pointer is never
+  // meaningful (one is a table slot index, the other a linear-memory
+  // address). Leave the externref argument unconverted so the regular
+  // conversion check reports it.
+  if (AnyOther)
+    return;
+
+  for (unsigned I = 0; I != N; ++I) {
+    if (!IsRef[I])
+      continue;
+    QualType ParamTy = Proto->getParamType(I);
+    const auto *ParamPtr = ParamTy->getAs<PointerType>();
+    const auto *ArgPtr = Args[I]->getType()->getAs<PointerType>();
+    // Keep the usual qualifier check: a const externref * destination is an
+    // error.
+    if (ArgPtr->getPointeeType().isConstQualified() &&
+        !ParamPtr->getPointeeType().isConstQualified())
+      continue;
+    Args[I] = ImplicitCastExpr::Create(Context, ParamTy, CK_BitCast, Args[I],
+                                       /*BasePath=*/nullptr, VK_PRValue,
+                                       FPOptionsOverride());
+  }
+}
+
 bool Sema::CheckPointerConversion(Expr *From, QualType ToType,
                                   CastKind &Kind,
                                   CXXCastPath& BasePath,

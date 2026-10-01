@@ -139,3 +139,18 @@ static_assert(__is_nothrow_constructible(__externref_t, __externref_t), "");
 // Pointers to externref are ordinary linear-memory pointers.
 static_assert(__is_trivially_copyable(__externref_t *), "");
 static_assert(__is_trivially_copyable(__externref_t (*)[3]), "");
+
+// memcpy & co. accept externref pointers (all pointer arguments must then be
+// externref pointers); such calls copy table slots. Any other function taking
+// void * does not.
+extern "C" void *memcpy(void *, const void *, size_t); // expected-note 2 {{candidate function not viable}}
+extern "C" void *memset(void *, int, size_t);
+void other(void *); // expected-note {{candidate function not viable}}
+void mem_functions(__externref_t *d, const __externref_t *s, int *ip, size_t n) {
+  memcpy(d, s, n);
+  memset(d, 0, n);
+  memcpy(d, nullptr, n);
+  memcpy(ip, s, n); // expected-error {{no matching function for call to 'memcpy'}}
+  memcpy(s, d, n);  // expected-error {{no matching function for call to 'memcpy'}}
+  other(d);         // expected-error {{no matching function for call to 'other'}}
+}

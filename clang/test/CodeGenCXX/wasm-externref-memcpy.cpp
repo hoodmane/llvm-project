@@ -52,3 +52,23 @@ void arrays(__externref_t (&d)[4], __externref_t (&s)[4]) {
 // ASM-LABEL: _Z4fillPu11externref_tu11externref_tm:
 // ASM:         table.fill __externref_table
 // ASM: .tabletype __externref_table, externref
+
+// The C library's bulk memory functions may also be called directly with
+// externref pointers (for all of their pointer arguments; mixing with ordinary
+// pointers is an error) and lower the same way.
+extern "C" void *memcpy(void *, const void *, size_t);
+extern "C" void *memmove(void *, const void *, size_t);
+extern "C" void *memset(void *, int, size_t);
+
+// CHECK-LABEL: define{{.*}} void @_Z7libcallPu11externref_tPKu11externref_tm(
+// CHECK:         call void @llvm.wasm.table.copy(ptr addrspace(1) @__externref_table, ptr addrspace(1) @__externref_table,
+// CHECK:         call void @llvm.wasm.table.copy(ptr addrspace(1) @__externref_table, ptr addrspace(1) @__externref_table,
+// CHECK:         call void @llvm.wasm.table.fill.externref(ptr addrspace(1) @__externref_table,
+// CHECK:         call void @llvm.wasm.table.copy(ptr addrspace(1) @__externref_table, ptr addrspace(1) @__externref_table,
+// CHECK-NOT:     llvm.mem
+void libcall(__externref_t *d, const __externref_t *s, size_t n) {
+  memcpy(d, s, n);
+  memmove(d, s, n);
+  memset(d, 0, n);
+  __builtin_memcpy(d, s, n);
+}
