@@ -145,6 +145,23 @@ static void promoteToLocal(AllocaInst *AI) {
   AI->eraseFromParent();
 }
 
+// If \p Ty is externref or a (possibly nested) fixed-size array of externref,
+// return the number of externrefs in it; otherwise return nullopt. These are
+// the allocation types that can be spilled to a run of consecutive externref
+// table slots: because externref is laid out one byte wide, a byte offset into
+// the aggregate equals the slot offset within the run, so GEPs into the
+// alloca need no rewriting once its base becomes a slot index.
+static std::optional<uint64_t> externrefSlotCount(Type *Ty) {
+  uint64_t Count = 1;
+  while (auto *AT = dyn_cast<ArrayType>(Ty)) {
+    Count *= AT->getNumElements();
+    Ty = AT->getElementType();
+  }
+  if (WebAssembly::isWebAssemblyExternrefType(Ty))
+    return Count;
+  return std::nullopt;
+}
+
 // LLVM aggregate types can only refer to themselves recursively through a
 // pointer (a leaf type here), so plain structural recursion terminates without
 // needing a visited-set cycle guard.
@@ -179,39 +196,54 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
            .contains("+reference-types"))
     return false;
 
-  // Collect scalar reference-type allocas, classifying each as "local" (address
-  // does not escape) or "spilled" (address escapes). Aggregates containing
-  // externref are rejected below: lowering their element GEPs to table slots
-  // would require assigning one table slot per element.
+  // Collect reference-type allocas, classifying each as "local" (a scalar
+  // whose address does not escape) or "spilled" (address escapes, or an array
+  // of externref, which cannot be a wasm local). A spilled alloca gets a run
+  // of consecutive externref table slots, one per element. Other aggregates
+  // containing externref (structs, vectors) are rejected: externref fields
+  // cannot live in linear memory alongside other data.
   SmallVector<AllocaInst *, 4> ToPromote;
-  SmallVector<AllocaInst *, 4> ToSpill;
+  SmallVector<std::pair<AllocaInst *, uint64_t>, 4> ToSpill;
+  uint64_t NumSlots = 0;
   for (Instruction &I : instructions(F)) {
     auto *AI = dyn_cast<AllocaInst>(&I);
     if (!AI)
       continue;
-    if (!WebAssembly::isWebAssemblyReferenceType(AI->getAllocatedType())) {
-      if (containsWebAssemblyExternrefType(AI->getAllocatedType()))
+    Type *AllocTy = AI->getAllocatedType();
+    std::optional<uint64_t> Slots = externrefSlotCount(AllocTy);
+    if (!Slots) {
+      if (WebAssembly::isWebAssemblyReferenceType(AllocTy)) {
+        // A funcref (address-taken or not) becomes a local; an address-taken
+        // funcref would need a separate funcref table and is not yet
+        // supported.
+        ToPromote.push_back(AI);
+        continue;
+      }
+      if (containsWebAssemblyExternrefType(AllocTy))
         report_fatal_error(
             "WebAssembly: cannot allocate an aggregate containing externref "
-            "(spilling externref aggregates to the externref table is not yet "
-            "implemented)");
+            "(only scalars and arrays of externref can be spilled to the "
+            "externref table)");
       continue;
     }
-    // Only an address-taken externref needs spilling to the externref table.
-    // A non-escaping reference (externref or funcref) becomes a local; an
-    // address-taken funcref would need a separate funcref table and is not yet
-    // supported (it keeps the old behavior of being promoted).
-    if (addressIsLocalOnly(AI) ||
-        !WebAssembly::isWebAssemblyExternrefType(AI->getAllocatedType())) {
+    // Only an address-taken externref needs spilling to the externref table;
+    // a non-escaping scalar becomes a local.
+    if (!isa<ArrayType>(AllocTy) && addressIsLocalOnly(AI)) {
       ToPromote.push_back(AI);
       continue;
     }
-    if (AI->isArrayAllocation())
-      report_fatal_error(
-          "WebAssembly: cannot take the address of an array of externref "
-          "(spilling externref arrays to the externref table is not yet "
-          "implemented)");
-    ToSpill.push_back(AI);
+    if (AI->isArrayAllocation()) {
+      auto *C = dyn_cast<ConstantInt>(AI->getArraySize());
+      if (!C)
+        report_fatal_error("WebAssembly: cannot allocate a variable-length "
+                           "array of externref");
+      *Slots *= C->getZExtValue();
+    }
+    if (NumSlots + *Slots > UINT32_MAX)
+      report_fatal_error("WebAssembly: too many externref table slots in one "
+                         "function");
+    ToSpill.push_back({AI, NumSlots});
+    NumSlots += *Slots;
   }
 
   if (ToPromote.empty() && ToSpill.empty())
@@ -251,8 +283,6 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
         ExternrefTableName, /*InsertBefore=*/nullptr,
         GlobalValue::NotThreadLocal, WebAssembly::WASM_ADDRESS_SPACE_VAR);
 
-  const unsigned NumSlots = ToSpill.size();
-
   // Prologue: load the current externref stack pointer, grow the stack down by
   // NumSlots, and write it back. Loads/stores of the addrspace(1) global lower
   // to global.get/global.set __externref_stack_pointer.
@@ -262,16 +292,23 @@ bool WebAssemblyRefTypeMem2Local::runOnFunction(Function &F) {
       OldSP, ConstantInt::get(Int32Ty, NumSlots), "externref.sp.new");
   IRB.CreateStore(NewSP, SP);
 
-  // Each spilled reference gets one slot at NewSP + k; its address is that slot
-  // index reinterpreted as a pointer (zero-extended to pointer width on
-  // wasm64). Compute the address just before each alloca (NewSP, defined in
-  // the entry prologue, dominates them all) and then remove the alloca.
-  for (unsigned K = 0; K != NumSlots; ++K) {
-    AllocaInst *AI = ToSpill[K];
+  // Each spilled alloca gets its run of slots starting at NewSP + offset; its
+  // address is that slot index reinterpreted as a pointer (zero-extended to
+  // pointer width on wasm64). Compute the address just before each alloca
+  // (NewSP, defined in the entry prologue, dominates them all) and then
+  // remove the alloca.
+  for (auto &[AI, Offset] : ToSpill) {
+    // Lifetime markers only make sense on an alloca (the verifier insists on
+    // it); the slot run is managed by the prologue/epilogue instead.
+    for (User *U : llvm::make_early_inc_range(AI->users()))
+      if (auto *II = dyn_cast<IntrinsicInst>(U))
+        if (II->isLifetimeStartOrEnd())
+          II->eraseFromParent();
+
     IRBuilder<> B(AI);
     Value *Idx = NewSP;
-    if (K != 0)
-      Idx = B.CreateAdd(NewSP, ConstantInt::get(Int32Ty, K),
+    if (Offset != 0)
+      Idx = B.CreateAdd(NewSP, ConstantInt::get(Int32Ty, Offset),
                         AI->getName() + ".slot");
     // The slot index becomes the pointer value. Pointers to externref in the
     // dedicated externref-pointer address space are 32-bit on every target;
