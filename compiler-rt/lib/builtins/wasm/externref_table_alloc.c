@@ -16,30 +16,39 @@
 // current table size belongs to this allocator, which may extend it with
 // table.grow.
 //
-// Externref values cannot live in linear memory, so all allocator metadata is
-// kept in linear memory (obtained from malloc) and only externrefs go in the
-// table.  The design is deliberately simple:
+// This file is part of the compiler builtins so that every language that
+// targets WebAssembly (C, C++, Rust, ...) links the same allocator and shares
+// one notion of the table heap.  It therefore has no dependency on a C
+// library.  Its only need for linear memory is a small amount of metadata,
+// obtained through __externref_metadata_alloc (below) and never freed.
+//
+// Externref values cannot live in linear memory, so only externrefs go in the
+// table and all bookkeeping is kept beside it.  The design is deliberately
+// simple:
 //
 //   * Fresh slots are handed out from a bump pointer.
-//   * Freed blocks are pushed onto per-size-class free stacks.  Sizes up to
+//   * Freed blocks are pushed onto per-size-class free lists.  Sizes up to
 //     kExactClasses have an exact class; larger requests are rounded up to a
 //     power of two and the caller is allotted the rounded size.
+//   * An open-addressing hash map from block start to size class lets a block
+//     be freed without knowing its size (`__externref_table_free(p)`), which
+//     is what `delete` and `delete[]` on an `__externref_t *` need since there
+//     is nowhere in the table to keep an array cookie.  Its size is
+//     proportional to the number of live blocks, not to the table.
+//     `__externref_table_free_sized(p, n)` is available when the caller does
+//     know the size.
 //   * Freed slots are nulled with table.fill so the host GC can reclaim the
 //     referenced objects.
-//   * A one-byte side table in linear memory records the size class of each
-//     block at its first slot, so blocks can be freed without knowing their
-//     size (`__externref_table_free(p)`), which is what `delete` and
-//     `delete[]` on an `__externref_t *` need since there is nowhere in the
-//     table to keep an array cookie.  `__externref_table_free_sized(p, n)` is
-//     available when the caller does know the size.
 //
-// This allocator is not thread-safe.
+// Threads: each WebAssembly thread has its own __externref_table (tables are
+// not shared between instances), so all allocator state is thread-local and
+// no locking is needed.  Without the atomics feature `_Thread_local` is just
+// a plain global.
 //
 //===----------------------------------------------------------------------===//
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 
 #include "../int_lib.h"
 
@@ -100,6 +109,79 @@ REFTYPES static void externref_table_clear(slot_t idx, slot_t n) {
 }
 
 //===----------------------------------------------------------------------===//
+// Linear memory for metadata.
+//
+// Linear memory on WebAssembly is owned by whoever implements malloc: libc
+// allocators (emscripten, wasi-libc, Rust's dlmalloc) assume that nobody else
+// calls memory.grow, so this file must not grow the memory behind their back.
+// Instead it asks for metadata memory through a weak hook that a C library or
+// language runtime overrides to route to its own allocator:
+//
+//   void *__externref_metadata_alloc(size_t n);
+//
+// It must return `n` bytes of 8-byte-aligned memory, or NULL.  The memory is
+// never freed (the allocator recycles its own free-list nodes and map
+// buffers), and it is only ever requested in chunks of a page or more.  The
+// default implementation below is for modules with no memory owner at all:
+// a static reserve (zero cost in the binary: it lives in .bss) followed by
+// memory.grow.
+//
+// Requests are rare and large, so a simple bump arena over whatever the hook
+// returns is enough.
+//===----------------------------------------------------------------------===//
+
+enum { kPageSize = 65536 };
+
+static _Thread_local unsigned char static_reserve[kPageSize]
+    __attribute__((aligned(8)));
+static _Thread_local int static_reserve_used;
+
+__attribute__((weak)) void *__externref_metadata_alloc(size_t n) {
+  if (!static_reserve_used && n <= sizeof(static_reserve)) {
+    static_reserve_used = 1;
+    return static_reserve;
+  }
+  size_t pages = (n + kPageSize - 1) / kPageSize;
+  uintptr_t old = (uintptr_t)__builtin_wasm_memory_grow(0, pages);
+  if (old == (uintptr_t)-1)
+    return NULL;
+  return (void *)(old * kPageSize);
+}
+
+static _Thread_local struct {
+  unsigned char *cur; // next free byte
+  unsigned char *end; // end of the current chunk
+} arena;
+
+// Allocates `n` bytes, 8-byte aligned, or returns NULL if no memory is
+// available.
+static void *arena_alloc(size_t n) {
+  n = (n + 7) & ~(size_t)7;
+  if ((size_t)(arena.end - arena.cur) < n) {
+    // Request at least a page, and geometrically more as the arena grows, so
+    // the hook is called O(log n) times; what it returns is never contiguous
+    // with the previous chunk in general, so the old tail is abandoned.
+    size_t chunk = (size_t)(arena.end - arena.cur) * 2;
+    if (chunk < kPageSize)
+      chunk = kPageSize;
+    if (chunk < n)
+      chunk = n;
+    unsigned char *p = (unsigned char *)__externref_metadata_alloc(chunk);
+    if (!p && chunk > n) {
+      chunk = (n + kPageSize - 1) & ~(size_t)(kPageSize - 1);
+      p = (unsigned char *)__externref_metadata_alloc(chunk);
+    }
+    if (!p)
+      return NULL;
+    arena.cur = p;
+    arena.end = p + chunk;
+  }
+  void *p = arena.cur;
+  arena.cur += n;
+  return p;
+}
+
+//===----------------------------------------------------------------------===//
 // Size classes.
 //===----------------------------------------------------------------------===//
 
@@ -108,14 +190,6 @@ REFTYPES static void externref_table_clear(slot_t idx, slot_t n) {
 enum { kExactClasses = 32 };
 enum { kNumClasses = kExactClasses + 8 * sizeof(slot_t) };
 
-// Rounds `n` (> kExactClasses) up to a power of two.
-static slot_t round_up_pow2(slot_t n) {
-  slot_t p = (slot_t)kExactClasses * 2;
-  while (p < n)
-    p <<= 1;
-  return p;
-}
-
 // Returns the size class for a request of `n` slots and stores the number of
 // slots actually reserved for that class in *reserved.
 static unsigned size_class(slot_t n, slot_t *reserved) {
@@ -123,39 +197,156 @@ static unsigned size_class(slot_t n, slot_t *reserved) {
     *reserved = n;
     return (unsigned)(n - 1);
   }
-  slot_t p = round_up_pow2(n);
-  *reserved = p;
-  // log2(p) - log2(kExactClasses * 2) + kExactClasses
   unsigned cls = kExactClasses;
-  for (slot_t q = (slot_t)kExactClasses * 2; q < p; q <<= 1)
+  slot_t p = (slot_t)kExactClasses * 2;
+  while (p < n) {
+    p <<= 1;
     ++cls;
+  }
+  *reserved = p;
   return cls;
 }
 
+// Number of slots reserved for a block of class `cls`.
+static slot_t class_size(unsigned cls) {
+  if (cls < kExactClasses)
+    return cls + 1;
+  return (slot_t)kExactClasses << (cls - kExactClasses + 1);
+}
+
 //===----------------------------------------------------------------------===//
-// Allocator state (all in linear memory).
+// Allocator state (all in linear memory, all thread-local).
 //===----------------------------------------------------------------------===//
 
+// Free lists are singly linked through nodes carved from the arena; nodes are
+// recycled through `free_nodes` so the arena only ever grows to the peak
+// number of simultaneously free blocks.
+typedef struct free_node {
+  struct free_node *next;
+  slot_t idx;
+} free_node_t;
+
+// Live-block map: open addressing with linear probing, keyed by block start
+// slot (never 0, since slot 0 is the null externref).  Values are 1 + the
+// size class.  Deleted entries are tombstoned so probe chains stay intact;
+// the map is rebuilt when it fills up.
 typedef struct {
-  slot_t *items;
-  size_t len;
-  size_t cap;
-} free_stack_t;
+  slot_t key;        // 0 = empty, kTombstone = deleted
+  unsigned char cls; // 1 + size class
+} map_entry_t;
 
-static struct {
+enum { kTombstone = (slot_t)-1 };
+
+static _Thread_local struct {
   int initialized;
+  int failed;  // set if the initial map could not be allocated
   slot_t base; // first heap slot
   slot_t top;  // next never-allocated slot
   slot_t end;  // current table size (exclusive)
-  free_stack_t free_lists[kNumClasses];
-  // classes[slot - base] is 1 + the size class of the live block starting at
-  // `slot`, or 0 if no live block starts there.  Covers [base, end).
-  uint8_t *classes;
+  free_node_t *free_lists[kNumClasses];
+  free_node_t *free_nodes;
+  map_entry_t *map;
+  size_t map_cap;  // power of two
+  size_t map_used; // live + tombstones
+  size_t map_live;
+  // The previous map buffer, reused for the next rehash when it is big
+  // enough (which it always is for a same-size tombstone purge), so that
+  // rehashing does not leak arena memory in the common case.
+  map_entry_t *spare;
+  size_t spare_cap;
 } state;
+
+static size_t map_hash(slot_t key, size_t cap) {
+  // Fibonacci hashing; block starts are often regularly spaced.
+  return (size_t)((uint32_t)key * 2654435769u) & (cap - 1);
+}
+
+static map_entry_t *map_find(slot_t key) {
+  size_t i = map_hash(key, state.map_cap);
+  for (size_t n = 0; n < state.map_cap; ++n) {
+    map_entry_t *e = &state.map[i];
+    if (e->key == key)
+      return e;
+    if (e->key == 0)
+      return NULL;
+    i = (i + 1) & (state.map_cap - 1);
+  }
+  return NULL;
+}
+
+// Inserts into `m` (of capacity `cap`, no tombstones) without resizing.
+static void map_insert_raw(map_entry_t *m, size_t cap, slot_t key,
+                           unsigned char cls) {
+  size_t i = map_hash(key, cap);
+  while (m[i].key != 0)
+    i = (i + 1) & (cap - 1);
+  m[i].key = key;
+  m[i].cls = cls;
+}
+
+// Rebuilds the map with capacity `cap`, dropping tombstones.  Returns 0 on
+// failure (the old map is kept).
+static int map_rehash(size_t cap) {
+  map_entry_t *m;
+  size_t m_cap;
+  if (state.spare && state.spare_cap >= cap) {
+    m = state.spare;
+    m_cap = state.spare_cap;
+    cap = m_cap;
+  } else {
+    m = (map_entry_t *)arena_alloc(cap * sizeof(map_entry_t));
+    if (!m)
+      return 0;
+    m_cap = cap;
+  }
+  for (size_t i = 0; i < cap; ++i) {
+    m[i].key = 0;
+    m[i].cls = 0;
+  }
+  for (size_t i = 0; i < state.map_cap; ++i) {
+    map_entry_t *e = &state.map[i];
+    if (e->key != 0 && e->key != kTombstone)
+      map_insert_raw(m, cap, e->key, e->cls);
+  }
+  // Keep the old buffer as the spare for the next rehash (a same-size
+  // tombstone purge reuses it; a doubling allocates once and then the two
+  // buffers alternate).
+  state.spare = state.map;
+  state.spare_cap = state.map_cap;
+  state.map = m;
+  state.map_cap = m_cap;
+  state.map_used = state.map_live;
+  return 1;
+}
+
+// Records a live block.  Returns 0 if the map is full and cannot grow.
+static int map_insert(slot_t key, unsigned char cls) {
+  // Keep the load factor (including tombstones) under 3/4.
+  if ((state.map_used + 1) * 4 > state.map_cap * 3) {
+    size_t cap = state.map_cap;
+    // Grow only if the live entries alone would exceed half; otherwise a
+    // same-size rehash to purge tombstones suffices.
+    if ((state.map_live + 1) * 2 > cap)
+      cap *= 2;
+    if (!map_rehash(cap))
+      return 0;
+  }
+  map_insert_raw(state.map, state.map_cap, key, cls);
+  ++state.map_used;
+  ++state.map_live;
+  return 1;
+}
+
+static void map_erase(map_entry_t *e) {
+  e->key = kTombstone;
+  e->cls = 0;
+  --state.map_live;
+}
 
 static void ensure_initialized(void) {
   if (state.initialized)
     return;
+  state.initialized = 1;
   // The linker always reserves slot 0 as the null externref (in an executable
   // it is part of the bss region; under PIC it is below __externref_table_base
   // and owned by the loader), so __externref_heap_base is never 0 and a slot
@@ -165,35 +356,33 @@ static void ensure_initialized(void) {
   if (state.end < state.top)
     state.end = state.top;
   state.base = state.top;
-  // Allocate at least one byte so an initially empty heap region does not get
-  // a NULL side table (calloc(0, 1) may return NULL).
-  size_t n = state.end - state.base;
-  state.classes = (uint8_t *)calloc(n ? n : 1, 1);
-  if (!state.classes) {
-    // Without the side table nothing can be allocated; make every request
-    // fail by leaving no room and forbidding growth (see reserve()).
-    state.end = state.top;
-  }
-  state.initialized = 1;
+  if (!map_rehash(256))
+    state.failed = 1;
 }
 
-static int free_stack_push(free_stack_t *s, slot_t idx) {
-  if (s->len == s->cap) {
-    size_t new_cap = s->cap ? s->cap * 2 : 16;
-    slot_t *items = (slot_t *)realloc(s->items, new_cap * sizeof(*items));
-    if (!items)
+static int free_list_push(unsigned cls, slot_t idx) {
+  free_node_t *node = state.free_nodes;
+  if (node) {
+    state.free_nodes = node->next;
+  } else {
+    node = (free_node_t *)arena_alloc(sizeof(free_node_t));
+    if (!node)
       return 0;
-    s->items = items;
-    s->cap = new_cap;
   }
-  s->items[s->len++] = idx;
+  node->idx = idx;
+  node->next = state.free_lists[cls];
+  state.free_lists[cls] = node;
   return 1;
 }
 
-static int free_stack_pop(free_stack_t *s, slot_t *idx) {
-  if (s->len == 0)
+static int free_list_pop(unsigned cls, slot_t *idx) {
+  free_node_t *node = state.free_lists[cls];
+  if (!node)
     return 0;
-  *idx = s->items[--s->len];
+  state.free_lists[cls] = node->next;
+  *idx = node->idx;
+  node->next = state.free_nodes;
+  state.free_nodes = node;
   return 1;
 }
 
@@ -202,8 +391,6 @@ static int free_stack_pop(free_stack_t *s, slot_t *idx) {
 static int reserve(slot_t n) {
   if (state.end - state.top >= n)
     return 1;
-  if (!state.classes)
-    return 0;
   slot_t need = n - (state.end - state.top);
   // Grow geometrically to amortize table.grow calls, but never by less than
   // the shortfall.  Guard against overflowing the 32-bit index space.
@@ -217,20 +404,6 @@ static int reserve(slot_t n) {
   if ((slot_t)-1 - state.end < want)
     return 0;
 
-  // Grow the side table first so a table.grow is never left unrecorded.
-  slot_t new_end = state.end + want;
-  uint8_t *classes = (uint8_t *)realloc(state.classes, new_end - state.base);
-  if (!classes) {
-    new_end = state.end + need;
-    classes = (uint8_t *)realloc(state.classes, new_end - state.base);
-    if (!classes)
-      return 0;
-    want = need;
-  }
-  state.classes = classes;
-  for (slot_t i = state.end; i < new_end; ++i)
-    state.classes[i - state.base] = 0;
-
   slot_t old = externref_table_grow(want);
   if (old == (slot_t)-1) {
     // Fall back to the minimum.
@@ -241,6 +414,8 @@ static int reserve(slot_t n) {
   }
   // `old` is the previous table size; normally state.end, but someone else may
   // have grown the table behind our back.  Only [old, old + want) is ours.
+  if (old != state.end)
+    state.top = old;
   state.end = old + want;
   return 1;
 }
@@ -248,10 +423,9 @@ static int reserve(slot_t n) {
 // Frees the block of `reserved` slots in class `cls` starting at `idx`.
 static void release(slot_t idx, unsigned cls, slot_t reserved) {
   externref_table_clear(idx, reserved);
-  state.classes[idx - state.base] = 0;
   // If pushing onto the free list fails we simply leak the slots; they are
   // already nulled so no host objects are retained.
-  (void)free_stack_push(&state.free_lists[cls], idx);
+  (void)free_list_push(cls, idx);
 }
 
 //===----------------------------------------------------------------------===//
@@ -263,6 +437,8 @@ static void release(slot_t idx, unsigned cls, slot_t reserved) {
 // a request of 1 so that the result is a unique non-null pointer.
 COMPILER_RT_ABI __externref_t *__externref_table_alloc(size_t nrefs) {
   ensure_initialized();
+  if (state.failed)
+    return NULL;
   if (nrefs == 0)
     nrefs = 1;
   // The index space is 32 bits regardless of size_t's width.
@@ -273,13 +449,20 @@ COMPILER_RT_ABI __externref_t *__externref_table_alloc(size_t nrefs) {
   unsigned cls = size_class((slot_t)nrefs, &reserved);
 
   slot_t idx;
-  if (!free_stack_pop(&state.free_lists[cls], &idx)) {
+  int from_free_list = free_list_pop(cls, &idx);
+  if (!from_free_list) {
     if (!reserve(reserved))
       return NULL;
     idx = state.top;
-    state.top += reserved;
   }
-  state.classes[idx - state.base] = (uint8_t)(cls + 1);
+  if (!map_insert(idx, (unsigned char)(cls + 1))) {
+    // Out of metadata memory; put the block back and fail the allocation.
+    if (from_free_list)
+      (void)free_list_push(cls, idx);
+    return NULL;
+  }
+  if (!from_free_list)
+    state.top += reserved;
   return (__externref_t *)(uintptr_t)idx;
 }
 
@@ -287,30 +470,30 @@ COMPILER_RT_ABI __externref_t *__externref_table_alloc(size_t nrefs) {
 // are nulled so the host can collect the referenced objects.  Freeing NULL is
 // a no-op; freeing a pointer that is not the start of a live block is ignored.
 COMPILER_RT_ABI void __externref_table_free(__externref_t *p) {
-  if (!p || !state.initialized)
+  if (!p || !state.initialized || state.failed)
     return;
   slot_t idx = (slot_t)(uintptr_t)p;
-  if (idx < state.base || idx >= state.end)
+  map_entry_t *e = map_find(idx);
+  if (!e || e->key == kTombstone)
     return;
-  uint8_t tag = state.classes[idx - state.base];
-  if (tag == 0)
-    return;
-  unsigned cls = tag - 1;
-  slot_t reserved = cls < kExactClasses ? cls + 1
-                                        : (slot_t)kExactClasses
-                                              << (cls - kExactClasses + 1);
-  release(idx, cls, reserved);
+  unsigned cls = e->cls - 1;
+  map_erase(e);
+  release(idx, cls, class_size(cls));
 }
 
 // Like __externref_table_free, but `nrefs` must equal the size passed to the
 // matching __externref_table_alloc call; this skips the side-table lookup.
 COMPILER_RT_ABI void __externref_table_free_sized(__externref_t *p,
                                                   size_t nrefs) {
-  if (!p || !state.initialized)
+  if (!p || !state.initialized || state.failed)
     return;
   if (nrefs == 0)
     nrefs = 1;
   slot_t reserved;
   unsigned cls = size_class((slot_t)nrefs, &reserved);
-  release((slot_t)(uintptr_t)p, cls, reserved);
+  slot_t idx = (slot_t)(uintptr_t)p;
+  map_entry_t *e = map_find(idx);
+  if (e && e->key != kTombstone)
+    map_erase(e);
+  release(idx, cls, reserved);
 }
